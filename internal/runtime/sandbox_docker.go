@@ -144,7 +144,7 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 	return out, err
 }
 
-func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
 	if trustedScriptCommand(command) {
 		return s.execScript(ctx, command, sink)
 	}
@@ -154,6 +154,9 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 		}
 	}
 	args := []string{"exec"}
+	if command.Stdin != nil {
+		args = append(args, "-i")
+	}
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
 		args = append(args, "-e", environment)
 	}
@@ -165,8 +168,28 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
 	}
 	args = append(args, s.name)
-	args = append(args, dockerWorkspaceExecArgv(command.Argv)...)
-	return runCommand(exec.CommandContext(ctx, "docker", args...), sink)
+	argv := dockerWorkspaceExecArgv(command.Argv)
+	if command.WorkingDir != "" {
+		argv = append([]string{"sh", "-lc", dockerMCPCallLaunch + `PATH=/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin:$PATH; export PATH
+cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLoginFlag(command.Argv)...)
+	}
+	processFile := ""
+	if command.OwnProcessGroup {
+		processFile = filepath.Join(s.requirements.ConversationRoot, "home", "tmp", fmt.Sprintf("process-%d.pid", time.Now().UnixNano()))
+		argv = dockerConversationProcessArgv(processFile, argv)
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			stopArgs := append([]string{"exec", s.name}, dockerConversationStopArgv(processFile)...)
+			if stopErr := exec.CommandContext(stopCtx, "docker", stopArgs...).Run(); stopErr != nil {
+				err = errors.Join(err, fmt.Errorf("停止 CLI 子进程失败: %w", stopErr))
+			}
+		}()
+	}
+	args = append(args, argv...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdin = command.Stdin
+	return runCommand(cmd, sink)
 }
 
 // dockerWorkspaceExecArgv runs argv inside /workspace without docker exec -w.
@@ -193,46 +216,29 @@ if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH
 fi
 `
 
-// onDemandCLIPath installs Claude Code for sandboxes of the published runtime
-// image, which does not bundle it, and returns the mounted bin directory. It is
-// appended to PATH so a CLI shipped by an older image still takes precedence.
+// onDemandCLIPath installs a CLI the published runtime image does not bundle
+// (Claude Code and the npm agent CLIs) for sandboxes of that image, and returns
+// the mounted bin directory. It is appended to PATH so a CLI shipped by an
+// older image still takes precedence.
 func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec) (string, error) {
-	if RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
+	if len(command.Argv) == 0 || RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
 		return "", nil
 	}
-	if command.Provider == "claude-code" {
-		if len(command.Argv) == 0 || command.Argv[0] != "claude" {
-			return "", nil
-		}
+	spec, ok := onDemandCLICatalog()[command.Provider]
+	if !ok || spec.Bundled || spec.Script != "" || command.Argv[0] != spec.Binary {
+		return "", nil
+	}
+	if spec.Engine == "claude-code" {
 		if _, err := EnsureClaudeCode(ctx); err != nil {
 			return "", err
 		}
 		return ClaudeCodeBinDir(), nil
 	}
-	return onDemandSandboxBinDir(command.Provider), nil
-}
-
-// onDemandSandboxBinDir returns the mounted bin directory of a CLI the platform
-// installed on demand (个人配置 → 安装), so docker exec can put it on PATH. The
-// runtime CLI directory is bind-mounted into the sandbox read-only; a CLI
-// installed anywhere else on the host (cursor, agy) is not visible there and
-// therefore contributes no PATH entry.
-func onDemandSandboxBinDir(provider string) string {
-	provider = strings.TrimSpace(provider)
-	root := strings.TrimSpace(RuntimeCLIDir())
-	if provider == "" || root == "" {
-		return ""
+	path, err := InstallOnDemandCLI(ctx, spec.Engine)
+	if err != nil {
+		return "", err
 	}
-	path, ok := OnDemandCLIPath(provider)
-	if !ok {
-		return ""
-	}
-	dir := filepath.Dir(path)
-	rel, err := filepath.Rel(root, dir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return ""
-	}
-	return dir
+	return filepath.Dir(path), nil
 }
 
 func dropShellLoginFlag(argv []string) []string {
@@ -681,10 +687,29 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 			args = append(args, "--user", fmt.Sprintf("%d:%d", os.Geteuid(), os.Getegid()))
 		}
 	}
-	if network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK")); network != "" {
+	if network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK")); network != "" && s.requirements.ConversationRoot == "" {
 		args = append(args, "--network", network)
 	}
-	maskArgs, err := dockerAgentConfigMasks(workspace)
+	if root := s.requirements.ConversationRoot; root != "" {
+		_, network, err := conversationDockerAccess(ctx)
+		if err != nil {
+			return err
+		}
+		if network != "" {
+			args = append(args, "--network", network)
+		}
+		args = append(args, "--add-host", "host.docker.internal:host-gateway", "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"))
+		guards, err := conversationGuardMounts(root)
+		if err != nil {
+			return err
+		}
+		args = append(args, guards...)
+	}
+	var aliases []string
+	if root := s.requirements.ConversationRoot; root != "" {
+		aliases = append(aliases, filepath.Join(root, "ws"))
+	}
+	maskArgs, err := dockerAgentConfigMasks(workspace, aliases...)
 	if err != nil {
 		return err
 	}

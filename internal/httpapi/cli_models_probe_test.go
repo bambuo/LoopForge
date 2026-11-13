@@ -3,6 +3,7 @@ package httpapi
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -28,7 +29,7 @@ auto (qoder-auto)
 		t.Fatalf("models: %v", models)
 	}
 	for _, model := range want {
-		if !slices.Contains(models, model) {
+		if !slices.ContainsFunc(models, func(got domain.CLIModel) bool { return got.ID == model.ID && got.Name == model.Name }) {
 			t.Fatalf("missing %v in %v", model, models)
 		}
 	}
@@ -71,7 +72,7 @@ func TestParseDshCatalog(t *testing.T) {
 		{ID: "deepseek-v4-pro", Name: "DeepSeek V4 Pro"},
 		{ID: "legacy-alias", Name: "Legacy Alias"},
 	}
-	if !slices.Equal(models, want) {
+	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("catalog: got %v want %v", models, want)
 	}
 	if models := parseDshCatalog([]byte("not json")); len(models) != 0 {
@@ -90,7 +91,7 @@ func TestMergeCatalogModels(t *testing.T) {
 		{ID: "deepseek-flash", Name: "DeepSeek V4.1 Flash"},
 		{ID: "deepseek-v4-pro", Name: "DeepSeek V4 Pro"},
 	}
-	if !slices.Equal(merged, want) {
+	if !reflect.DeepEqual(merged, want) {
 		t.Fatalf("merged: got %v want %v", merged, want)
 	}
 }
@@ -166,7 +167,7 @@ func TestParsePiAiCatalog(t *testing.T) {
 }`)
 	models := parsePiAiCatalog(data, "https://api.deepseek.com")
 	want := []domain.CLIModel{{ID: "deepseek-flash", Name: "DeepSeek V4.1 Flash"}}
-	if !slices.Equal(models, want) {
+	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("origin match: got %v want %v", models, want)
 	}
 	// The origin ignores path prefixes like /v1.
@@ -195,7 +196,7 @@ func TestParseGeminiModels(t *testing.T) {
 		{ID: "gemini-5-flash", Name: "Gemini 5 Flash"},
 		{ID: "gemini-5-pro", Name: "gemini-5-pro"},
 	}
-	if !slices.Equal(models, want) {
+	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("models: got %v want %v", models, want)
 	}
 	if next != "page-2" {
@@ -203,5 +204,29 @@ func TestParseGeminiModels(t *testing.T) {
 	}
 	if models, next := parseGeminiModels([]byte("not json")); models != nil || next != "" {
 		t.Fatalf("garbage input: %v %q", models, next)
+	}
+}
+
+func TestCursorModelFamiliesFoldGemini4(t *testing.T) {
+	output := `
+gemini-4-carbon-low - Gemini 4 Carbon Low
+gemini-4-carbon-medium - Gemini 4 Carbon Medium
+gemini-4-carbon-high - Gemini 4 Carbon High
+gemini-4-hydrogen-low - Gemini 4 Hydrogen Low
+gemini-4-hydrogen-medium - Gemini 4 Hydrogen Medium
+gemini-4-hydrogen-high - Gemini 4 Hydrogen High
+gemini-4-hydrogen-xhigh - Gemini 4 Hydrogen Extra High
+gemini-4-argon-low - Gemini 4 Argon Low
+gemini-4-argon-medium - Gemini 4 Argon Medium (default)
+gemini-4-argon-high - Gemini 4 Argon High
+`
+	got := cursorModelFamilies(parseCursorModels(output))
+	want := []domain.CLIModel{
+		{ID: "gemini-4-carbon", Name: "Gemini 4 Carbon"},
+		{ID: "gemini-4-hydrogen", Name: "Gemini 4 Hydrogen"},
+		{ID: "gemini-4-argon", Name: "Gemini 4 Argon"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("families:\n got %v\nwant %v", got, want)
 	}
 }

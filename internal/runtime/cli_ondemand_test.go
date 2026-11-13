@@ -66,7 +66,7 @@ func TestInstallOnDemandCLIKeepsDeepSeekEngineRelaxation(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls, _ := os.ReadFile(log)
-	if !strings.Contains(string(calls), "@deepseek-ai/dsh") || !strings.Contains(string(calls), "--engine-strict=false") {
+	if !strings.Contains(string(calls), "@deepseek-ai/dsh@"+DeepSeekHarnessVersion) || !strings.Contains(string(calls), "--engine-strict=false") {
 		t.Fatalf("npm calls: %s", calls)
 	}
 }
@@ -163,33 +163,5 @@ func TestNPMPackageSpecUsesLatestForBareNames(t *testing.T) {
 		if got := npmPackageSpec(tc.in); got != tc.want {
 			t.Errorf("npmPackageSpec(%q) = %q, want %q", tc.in, got, tc.want)
 		}
-	}
-}
-
-func TestOnDemandSandboxBinDirOnlyCoversTheMountedCLIDir(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", root)
-	install := func(engine, bin string) string {
-		t.Helper()
-		dir := filepath.Join(root, engine, "current", "node_modules", ".bin")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(dir, bin)
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	qoderBin := install("qoder", "qoder")
-	if got := onDemandSandboxBinDir("qoder"); got != filepath.Dir(qoderBin) {
-		t.Fatalf("qoder bin dir %q", got)
-	}
-	// Not installed: nothing to put on PATH, the image provides its own.
-	if got := onDemandSandboxBinDir("kimi"); got != "" {
-		t.Fatalf("missing engine %q", got)
-	}
-	if got := onDemandSandboxBinDir("codebuddy"); got != "" {
-		t.Fatalf("unknown engine %q", got)
 	}
 }
