@@ -31,6 +31,41 @@ if (typeof window !== "undefined") {
   globalThis.requestAnimationFrame ??= (callback) =>
     setTimeout(() => callback(performance.now()), 0);
   globalThis.cancelAnimationFrame ??= clearTimeout;
+  // Node 26 leaves a non-usable global localStorage, which also hides jsdom's
+  // storage. The suite only needs an isolated key/value store per test file.
+  if (!globalThis.localStorage) {
+    const store = new Map();
+    const storage = {
+      get length() {
+        return store.size;
+      },
+      key: (index) => [...store.keys()][index] ?? null,
+      getItem: (key) => (store.has(String(key)) ? store.get(String(key)) : null),
+      setItem: (key, value) => {
+        store.set(String(key), String(value));
+      },
+      removeItem: (key) => {
+        store.delete(String(key));
+      },
+      clear: () => {
+        store.clear();
+      },
+    };
+    for (const target of [globalThis, window]) {
+      Object.defineProperty(target, "localStorage", {
+        configurable: true,
+        value: storage,
+      });
+    }
+  }
+  // Node 26 defines a global localStorage getter that is undefined without
+  // --localstorage-file, shadowing jsdom's storage.
+  if (!globalThis.localStorage) {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: window.localStorage,
+    });
+  }
   // Vitest 4 exposes Node's native Blob URL store, which returns a
   // non-deterministic blob:nodedata URL. Tests assert a stable object URL.
   URL.createObjectURL = () => "blob:test";

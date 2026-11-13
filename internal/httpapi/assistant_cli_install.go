@@ -53,6 +53,25 @@ func (h *assistantHandlers) cliInstallStatus(c *gin.Context) {
 	h.answerCLIInstall(c, c.Query("engine"), false)
 }
 
+// cliInstallStatuses reports every allowlisted CLI at once, so 个人配置 can
+// offer the install button before a conversation fails.
+func (h *assistantHandlers) cliInstallStatuses(c *gin.Context) {
+	if _, ok := h.requestUser(c.Request, true); !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录后再安装 CLI"})
+		return
+	}
+	engines := make(map[string]gin.H, len(runtime.OnDemandCLIEngines()))
+	for _, engine := range runtime.OnDemandCLIEngines() {
+		status, errText := h.cliInstallState(engine)
+		entry := gin.H{"status": status}
+		if errText != "" {
+			entry["error"] = errText
+		}
+		engines[engine] = entry
+	}
+	c.JSON(http.StatusOK, gin.H{"engines": engines})
+}
+
 func (h *assistantHandlers) answerCLIInstall(c *gin.Context, raw string, start bool) {
 	engine := assistantInstallEngine(raw)
 	if !runtime.OnDemandInstallable(engine) {

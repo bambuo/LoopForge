@@ -15,6 +15,7 @@ import (
 	"agentflow/internal/auth"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -165,6 +166,9 @@ chmod 755 "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 
 func TestInstallStatusSurvivesAReload(t *testing.T) {
 	resetCLIInstallJobs(t)
+	if hostHas("dsh") {
+		t.Skip("host dsh would hide the on-demand installation")
+	}
 	root := t.TempDir()
 	npm := t.TempDir()
 	script := `#!/bin/sh
@@ -379,3 +383,60 @@ mkdir -p "$prefix/node_modules/.bin"
 printf '#!/bin/sh\necho ok\n' > "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 chmod 755 "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 `
+
+func TestCLIInstallStatusesCoversEveryInstallableEngine(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", t.TempDir())
+	resetCLIInstallJobs(t)
+
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	user, err := store.CreateLocalAccount("cli-status", "secret1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &assistantHandlers{deps: &deps{repo: store}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/assistant/cli-install/status", nil)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	h.cliInstallStatuses(c)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous: %d %s", rec.Code, rec.Body.String())
+	}
+
+	actor := domainUserToAuth(user)
+	req = httptest.NewRequest(http.MethodGet, "/api/assistant/cli-install/status", nil)
+	req = req.WithContext(context.WithValue(req.Context(), requestUserContextKey{}, actor))
+	rec = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(rec)
+	c.Request = req
+	h.cliInstallStatuses(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statuses: %d %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Engines map[string]struct {
+			Status string `json:"status"`
+		} `json:"engines"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	// 个人配置 renders one install row per allowlisted engine, so every kind
+	// must be reported, not just the ones the chat failure banner knows.
+	for _, engine := range runtime.OnDemandCLIEngines() {
+		entry, ok := body.Engines[engine]
+		if !ok {
+			t.Fatalf("missing engine %q in %v", engine, body.Engines)
+		}
+		if entry.Status != "missing" && entry.Status != "installed" {
+			t.Fatalf("%s status %q", engine, entry.Status)
+		}
+	}
+}

@@ -107,7 +107,9 @@ func assistantEngineCredential(user domain.User, engine string) (apiKey, baseURL
 		return strings.TrimSpace(user.CodeBuddyAPIKey), ""
 	}
 	cred := user.AgentCLICredentials[engine]
-	if runtime.IsAgentCLI(engine) && engine != runtime.AgentCLICursor {
+	// Cursor and Qoder only reach their own services, so a stored Base URL
+	// would be dead configuration.
+	if runtime.IsAgentCLI(engine) && engine != runtime.AgentCLICursor && engine != runtime.AgentCLIQoder {
 		baseURL = strings.TrimSpace(cred.BaseURL)
 	}
 	return strings.TrimSpace(cred.APIKey), baseURL

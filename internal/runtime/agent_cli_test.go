@@ -29,6 +29,7 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 		{AgentCLIDeepSeek, AgentCLICommandOptions{}, []string{"--permission-mode", "read-only"}},
 		{AgentCLIKimi, AgentCLICommandOptions{AgentFile: "/a.md"}, []string{"--agent-file", "/a.md"}},
 		{AgentCLIOpenCode, AgentCLICommandOptions{Resume: "ses_1"}, []string{"-s", "ses_1", "-m", "agentflow/m1"}},
+		{AgentCLIQoder, AgentCLICommandOptions{Resume: "ses_2"}, []string{"--resume", "ses_2", "--model", "m1", "--permission-mode", "bypass_permissions", "--disallowed-tools", "Bash,Edit,Write,WebFetch,WebSearch,Task,NotebookEdit"}},
 	}
 	for _, c := range cases {
 		command := chat(c.kind, c.o)
@@ -60,6 +61,14 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 	}
 	if argv := AgentCLICommand(AgentCLIDeepSeek, AgentCLICommandOptions{Prompt: "x"}).Argv; !slices.Contains(argv, "danger-full-access") {
 		t.Errorf("SOP dsh argv: %q", argv)
+	}
+	// Qoder SOP nodes keep every tool open and the prompt rides inline.
+	argv := AgentCLICommand(AgentCLIQoder, AgentCLICommandOptions{Prompt: "x", SystemPrompt: "SYSTEM"}).Argv
+	if !slices.Contains(argv, "bypass_permissions") || slices.Contains(argv, "--disallowed-tools") || !strings.Contains(argv[len(argv)-1], "SYSTEM") {
+		t.Errorf("SOP qoder argv: %q", argv)
+	}
+	if argv := AgentCLICommand(AgentCLIQoder, AgentCLICommandOptions{Chat: true, Prompt: "hello", Resume: "s1"}).Argv; argv[len(argv)-1] != "hello" {
+		t.Errorf("resumed qoder chat repeats the system prompt: %q", argv)
 	}
 }
 
@@ -140,6 +149,16 @@ func TestApplyAgentCLICredential(t *testing.T) {
 	if !slices.Equal(argv[:5], []string{"dsh", "--profile", "headless", "--patch", "/h/.dsh/agentflow-model.json"}) {
 		t.Fatalf("dsh argv: %q", argv)
 	}
+
+	// Qoder only needs the token: the official service owns models, so no
+	// model is required and no credential file is written.
+	_, env, err = ApplyAgentCLICredential(AgentCLIQoder, ProviderCredential{APIKey: "secret-key"}, AgentCLIOptions{}, HostAgentCLIHome(home), "/w/home", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["QODER_PERSONAL_ACCESS_TOKEN"] != "secret-key" || env["QODERCN_PERSONAL_ACCESS_TOKEN"] != "secret-key" || env["QODER_CONFIG_DIR"] != "/w/home/.qoder" {
+		t.Fatalf("qoder env: %v", env)
+	}
 }
 
 func TestWriteAgentCLIMCPConfigChat(t *testing.T) {
@@ -189,6 +208,25 @@ func TestWriteAgentCLIMCPConfigChat(t *testing.T) {
 	if server := read(home, ".gemini/config/mcp_config.json")["mcpServers"].(map[string]any)["gw"].(map[string]any); server["serverUrl"] == nil {
 		t.Fatalf("agy mcp: %v", server)
 	}
+	if err := WriteAgentCLIMCPConfig(AgentCLIQoder, HostAgentCLIHome(home), entries, AgentCLIMCPOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if server := read(home, ".qoder/settings.json")["mcpServers"].(map[string]any)["gw"].(map[string]any); server["url"] != "http://127.0.0.1:1/mcp" {
+		t.Fatalf("qoder mcp: %v", server)
+	}
+	// A command-only server gets an explicit empty args array: Qoder rejects
+	// the whole server when the decoded args are null.
+	gateEntries, err := mcpConfigEntries([]domain.MCPServerDefinition{{ID: "gate", Transport: "stdio", Command: "/bin/agentflow-gate"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentCLIMCPConfig(AgentCLIQoder, HostAgentCLIHome(home), gateEntries, AgentCLIMCPOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	command := read(home, ".qoder/settings.json")["mcpServers"].(map[string]any)["gate"].(map[string]any)
+	if args, ok := command["args"].([]any); !ok || len(args) != 0 {
+		t.Fatalf("qoder command mcp args: %v", command)
+	}
 }
 
 func TestWriteKimiChatAgent(t *testing.T) {
@@ -216,6 +254,36 @@ func TestAgentCLITranslatorPiNestedTools(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, `"name":"probe_read_secret"`) || !strings.Contains(joined, `"tool_use_id":"inner"`) {
 		t.Fatalf("nested pi tool calls are not reported:\n%s", joined)
+	}
+}
+
+func TestAgentCLITranslatorQoder(t *testing.T) {
+	translate := NewAgentCLITranslator(AgentCLIQoder)
+	var lines []string
+	for _, raw := range []string{
+		`{"type":"system","subtype":"init","session_id":"q-1","model":"auto"}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"plan"},{"type":"text","text":"working"}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":false,"content":"a.txt"}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"done","usage":{"input_tokens":10,"output_tokens":5}}`,
+	} {
+		lines = append(lines, translate(raw)...)
+	}
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		`"session_id":"q-1"`, `"type":"thinking"`, `"name":"Bash"`,
+		`"tool_use_id":"t1"`, `"subtype":"success"`, `"input_tokens":10`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("qoder stream misses %s:\n%s", want, joined)
+		}
+	}
+	// A failed result without a text body surfaces the error text.
+	translate = NewAgentCLITranslator(AgentCLIQoder)
+	translate(`{"type":"system","subtype":"init","session_id":"q-2"}`)
+	lines = translate(`{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["main model \"auto\" is unavailable."]}`)
+	if joined = strings.Join(lines, "\n"); !strings.Contains(joined, `"subtype":"error"`) || !strings.Contains(joined, "auto") {
+		t.Fatalf("qoder failure stream:\n%s", joined)
 	}
 }
 

@@ -758,3 +758,73 @@ func TestProductAndFrontendGenericTemplatesAreListed(t *testing.T) {
 		}
 	}
 }
+
+func TestGenericTemplateCloneReplacesCodeBuddyRoles(t *testing.T) {
+	h, s := newGenericTemplateServer(t)
+	clonePath := "/api/workflows/" + repo.GenericBackendDeliveryWorkflowID + "/clone"
+	clone := func(id string, body map[string]any) domain.WorkflowDefinition {
+		t.Helper()
+		body["id"], body["name"], body["owner"], body["projectId"] = id, "后端交付（复制）", "alpha-team", "alpha"
+		return requestJSON[domain.WorkflowDefinition](t, h, http.MethodPost, clonePath, body, http.StatusCreated)
+	}
+	agentNodes := func(workflow domain.WorkflowDefinition) []string {
+		var ids []string
+		for _, node := range workflow.Nodes {
+			if node.Type == "agent" && node.AgentID != "" {
+				ids = append(ids, node.AgentID)
+			}
+		}
+		if len(ids) == 0 {
+			t.Fatal("cloned workflow has no agent nodes")
+		}
+		return ids
+	}
+	assertExecutors := func(workflow domain.WorkflowDefinition, want string) {
+		t.Helper()
+		for _, id := range agentNodes(workflow) {
+			agent, found := s.Agent(id)
+			if !found {
+				t.Fatalf("missing cloned agent %q", id)
+			}
+			if agent.ExecutorID != want {
+				t.Fatalf("agent %s executor = %q, want %q", id, agent.ExecutorID, want)
+			}
+			if want != "codebuddy" && (agent.Model != "" || agent.Effort != "") {
+				t.Fatalf("executor switch kept CodeBuddy model/effort: %+v", agent)
+			}
+		}
+	}
+
+	// A plain copy keeps the template's CodeBuddy roles.
+	assertExecutors(clone("alpha-codebuddy-delivery", map[string]any{}), "codebuddy")
+	// Re-copying with Qoder moves the reused CodeBuddy roles over.
+	qoderCopy := clone("alpha-qoder-delivery", map[string]any{"executorId": "qoder"})
+	assertExecutors(qoderCopy, "qoder")
+
+	// A role deliberately set to another executor survives the next copy.
+	pinned := agentNodes(qoderCopy)[0]
+	agent, found := s.Agent(pinned)
+	if !found {
+		t.Fatalf("missing agent %q", pinned)
+	}
+	agent.ExecutorID = "kimi"
+	if err := s.PutAgent(agent); err != nil {
+		t.Fatal(err)
+	}
+	zcodeCopy := clone("alpha-zcode-delivery", map[string]any{"executorId": "zcode"})
+	for _, id := range agentNodes(zcodeCopy) {
+		got, _ := s.Agent(id)
+		want := "qoder"
+		if id == pinned {
+			want = "kimi"
+		}
+		if got.ExecutorID != want {
+			t.Fatalf("agent %s executor = %q, want %q", id, got.ExecutorID, want)
+		}
+	}
+
+	// The body selects an allowlisted executor, never a command.
+	requestJSON[map[string]any](t, h, http.MethodPost, clonePath, map[string]any{
+		"id": "alpha-bad-executor", "name": "bad", "projectId": "alpha", "executorId": "rm -rf /",
+	}, http.StatusBadRequest)
+}

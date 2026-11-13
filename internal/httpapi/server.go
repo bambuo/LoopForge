@@ -280,6 +280,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
 	g.DELETE("/api/users/:id/git-ssh-keys/:keyID", api.users.gitSSHKeys)
 	g.POST("/api/users/:id/cli-models/probe", api.users.probeCLIModels)
+	g.POST("/api/users/:id/cli-test", api.users.testCLI)
 	g.Any("/api/users/:id", func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})
@@ -310,6 +311,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/assistant/models", asst.models)
 	g.POST("/api/assistant/cli-install", asst.installCLI)
 	g.GET("/api/assistant/cli-install", asst.cliInstallStatus)
+	g.GET("/api/assistant/cli-install/status", asst.cliInstallStatuses)
 	g.POST("/api/assistant/attachments", asst.uploadAttachment)
 	g.GET("/api/assistant/attachments/:id", asst.downloadAttachment)
 	g.GET("/api/assistant/references", asst.workbenchReferences)

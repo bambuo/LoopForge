@@ -82,20 +82,24 @@ function genericRequirementChips(w){
 }
 // Agent nodes run with the executor credentials of the requirement owner; a
 // bound repository only matters for templates that check out project code.
-function sopRunRequirements(w){
+// executorOverride applies to roles the template leaves on CodeBuddy, matching
+// the copy-time replacement done by the clone API.
+function sopRunRequirements(w,executorOverride){
   const nodes=w?.nodes||[],user=userById(state.currentUser?.id)||{};
   const project=(state.data?.projects||[]).find(p=>p.id===(w?.projectId||state.projectFilter))||(state.data?.projects||[]).find(p=>p.id===state.projectFilter);
   const driver=((state.data?.sandboxes||[]).find(sb=>sb.id===w?.sandboxProfileId)||{}).driver||(/docker/i.test(w?.sandboxProfileId||'')?'docker':'');
   const usesRepo=(catalogGeneric(w)||(w?.tags||[]).some(t=>String(t).startsWith('generic-source:')))&&!!project?.defaultRepositoryId;
   const rows=[];
   const providers=new Set();
+  const overrideKind=executorOverride&&executorOverride!=='codebuddy'?sopExecutorKind(executorOverride):'';
   for(const node of nodes.filter(n=>n.type==='agent')){
     const role=(state.data?.agents||[]).find(a=>a.id===node.agentId);
     const id=role?.executorId||node.executorId||'codebuddy';
-    const kind=(state.data?.executors||[]).find(e=>e.id===id)?.kind||id;
-    if(['codebuddy','codex','claude','claude-code','opencode','cursor','agy','kimi','pi','dsh','zcode'].includes(kind))providers.add(kind==='claude'?'claude-code':kind);
+    let kind=(state.data?.executors||[]).find(e=>e.id===id)?.kind||id;
+    if(overrideKind&&(kind==='codebuddy'||kind===''))kind=overrideKind;
+    if(['codebuddy','codex','claude','claude-code','opencode','cursor','agy','kimi','pi','dsh','zcode','qoder'].includes(kind))providers.add(kind==='claude'?'claude-code':kind);
   }
-  const agentLabels={opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
+  const agentLabels={opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode',qoder:'Qoder'};
   for(const kind of providers){
     const known={codebuddy:['CodeBuddy','codeBuddyApiKey','codeBuddyApiKeyConfigured'],codex:['Codex','codexApiKey','codexApiKeyConfigured'],'claude-code':['Claude Code','claudeCodeApiKey','claudeCodeApiKeyConfigured']}[kind];
     const [label,field,flag]=known||[agentLabels[kind]||kind,'agentCli.'+kind,'agentCliConfigured'];
@@ -108,6 +112,16 @@ function sopRunRequirements(w){
   if(usesRepo)rows.push({key:'run-repo',fix:'',label:'GitHub 仓库（已绑定）',ok:true,hint:'使用项目已绑定的仓库。访问私有仓库或推送代码时需要在个人配置中配置 GitHub Token；未绑定仓库时可在任务工作区直接运行。'});
   if(driver==='docker')rows.push({key:'run-docker',label:'Docker',ok:state.data?.capabilities?.docker!==false,hint:state.data?.capabilities?.docker===false?'平台连不上 Docker，这个 SOP 现在跑不了。重新运行 scripts/install.sh 会自动安装并挂载 Docker。':'在隔离的 Docker 沙箱里运行，首次运行会构建镜像，需要几分钟。'});
   return rows;
+}
+// sopExecutorKind 把执行器 ID 归一成 CLI kind（claude → claude-code 等）。
+function sopExecutorKind(id){const exec=(state.data?.executors||[]).find(e=>e.id===id);return String(exec?.kind||id||'').trim()}
+// sopExecutorConfigured 判断当前用户是否已配置该执行器的个人凭据。
+function sopExecutorConfigured(id){
+  const kind=sopExecutorKind(id),user=userById(state.currentUser?.id)||{};
+  const known={codebuddy:'codeBuddyApiKeyConfigured',codex:'codexApiKeyConfigured','claude-code':'claudeCodeApiKeyConfigured',claude:'claudeCodeApiKeyConfigured'}[kind];
+  if(known)return !!user[known];
+  const key=kind==='claude'?'claude-code':kind;
+  return !!user.agentCliCredentials?.[key]?.apiKeyConfigured;
 }
 function sopRunRequirementChips(w){
   const rows=sopRunRequirements(w);
@@ -392,9 +406,43 @@ function bindSOPCatalogEvents(root){
 }
 function renderGenericRequirementRows(w){
   const host=$('#genericTemplateRequirements');if(!host)return;
-  const rows=[...sopRunRequirements(w).map(r=>({...r,fix:r.ok?'':r.fix||''})),...genericRequirementRows(w)];
+  const override=genericTemplateExecutorValue();
+  const rows=[...sopRunRequirements(w,override).map(r=>({...r,fix:r.ok?'':r.fix||''})),...genericRequirementRows(w)];
+  const head=$('#genericRequirementHead');
+  if(head){
+    const title=head.querySelector('b'),hint=head.querySelector('span');
+    if(title)title.textContent=override?'复制后的运行依赖':'运行依赖';
+    if(hint)hint.textContent=override?'以下按复制后的执行器检查；未配置时对应节点会在运行中降级或失败。凭证按任务责任人注入。':'复制不检查依赖；未配置时对应节点会在运行中降级或失败。凭证按任务责任人注入。';
+  }
   host.innerHTML=rows.map(r=>`<div class="req-row ${r.ok?'ok':'missing'}"><span class="req-mark">${r.ok?'✓':'!'}</span><div><b>${escapeHTML(r.label)}</b><p>${escapeHTML(r.hint)}${r.nodeId?` · 节点「${escapeHTML(workflowNodeName(w,r.nodeId))}」`:''}</p></div><span class="req-state">${r.ok?'已配置':'未配置'}</span>${r.fix?`<button type="button" class="button ghost small" data-fix-requirement="${escapeHTML(r.key)}">${escapeHTML(r.fixLabel)}</button>`:''}</div>`).join('')||'<div class="req-row ok"><span class="req-mark">✓</span><div><b>无额外依赖</b><p>复制到本项目后即可直接运行。</p></div></div>';
   host.querySelectorAll('[data-fix-requirement]').forEach(btn=>btn.onclick=()=>openGenericRequirementTarget(btn.dataset.fixRequirement));
+}
+// genericTemplateExecutorValue 返回复制时选中的执行器；codebuddy 表示保持模板默认。
+function genericTemplateExecutorValue(){
+  const value=state.genericTemplateExecutor||'codebuddy';
+  return value==='codebuddy'?'':value;
+}
+// renderGenericTemplateExecutor 渲染「复制后执行器」选择器与当前选择提示。
+function renderGenericTemplateExecutor(){
+  const select=$('#genericTemplateExecutor');if(!select)return;
+  const current=state.genericTemplateExecutor||'codebuddy';
+  const options=(state.data?.executors||[]).filter(e=>e?.id).map(e=>({id:e.id,name:e.name||e.id,configured:sopExecutorConfigured(e.id)}));
+  select.innerHTML=options.map(o=>`<option value="${escapeHTML(o.id)}" ${o.id===current?'selected':''}>${escapeHTML(o.name)}${o.configured?'':'（未配置）'}</option>`).join('');
+  select.value=current;
+  select.onchange=()=>{
+    state.genericTemplateExecutor=select.value;
+    const w=(state.data?.workflows||[]).find(x=>x.id===state.genericTemplateId);
+    renderGenericTemplateExecutor();
+    renderGenericRequirementRows(w);
+  };
+  const hint=$('#genericTemplateExecutorHint');
+  if(hint){
+    const chosen=options.find(o=>o.id===current);
+    const show=!!chosen&&current!=='codebuddy';
+    hint.hidden=!show;
+    hint.textContent=!show?'':chosen.configured?`复制后 CodeBuddy 角色将切换为 ${chosen.name}。`:`${chosen.name} 尚未配置 API Key，复制后运行到相关节点会失败。`;
+    hint.classList.toggle('is-warn',show&&!chosen.configured);
+  }
 }
 async function openGenericTemplateEditor(id){
   const w=(state.data?.workflows||[]).find(x=>x.id===id&&catalogGeneric(x));
@@ -409,17 +457,19 @@ function openGenericTemplateModal(id){
   const w=(state.data?.workflows||[]).find(x=>x.id===id&&catalogGeneric(x));
   if(!w)return toast('通用模板不存在或已下架');
   state.genericTemplateId=id;
+  state.genericTemplateExecutor='codebuddy';
   $('#genericTemplateTitle').textContent=`使用「${w.name}」`;
   $('#genericTemplateIntro').textContent=w.description||'平台提供的通用流程模板，复制后归本项目所有。';
   const nodes=w.nodes||[],agentCount=nodes.filter(n=>n.type==='agent').length,gates=nodes.filter(n=>n.type==='approval').length;
   $('#genericTemplateStructure').innerHTML=`<span>${nodes.length} 个节点</span><span>${agentCount} 个角色节点</span><span>${gates} 个人工门禁</span>${nodes.some(n=>n.id==='mr')?'<span class="highlight">含「发起 PR」节点</span>':''}<span>复制=归本项目、可自由修改、不再跟随平台更新</span><span>直接运行=始终使用平台最新版</span>`;
+  renderGenericTemplateExecutor();
   renderGenericRequirementRows(w);
   $('#genericTemplateModal').classList.add('open');
 }
 function openGenericRequirementTarget(key){
   if(key==='run-key'||key.startsWith('run-key-')||key==='run-repo'){
     const w=(state.data?.workflows||[]).find(x=>x.id===state.genericTemplateId);
-    const row=sopRunRequirements(w).find(r=>r.key===key);
+    const row=sopRunRequirements(w,genericTemplateExecutorValue()).find(r=>r.key===key);
     $('#genericTemplateModal').classList.remove('open');
     if(row?.fix==='repository')return openRepositoryModal();
     gotoCredential(row?.field||(key==='run-key'?'codeBuddyApiKey':'gitToken'));
@@ -444,7 +494,10 @@ async function adoptGenericTemplate(){
   if(!state.projectFilter)return toast('请先在顶部选择一个项目');
   const button=$('#confirmGenericTemplate');button.disabled=true;button.textContent='复制中…';
   try{
-    const copied=await api(`/api/workflows/${encodeURIComponent(src.id)}/clone`,{method:'POST',body:JSON.stringify({id:uid('sop'),name:src.name.replace(/^通用/,''),owner:src.owner||'',projectId:state.projectFilter})});
+    const body={id:uid('sop'),name:src.name.replace(/^通用/,''),owner:src.owner||'',projectId:state.projectFilter};
+    const executor=genericTemplateExecutorValue();
+    if(executor)body.executorId=executor;
+    const copied=await api(`/api/workflows/${encodeURIComponent(src.id)}/clone`,{method:'POST',body:JSON.stringify(body)});
     state.data.workflows.unshift(copied);
     state.workflow=clone(copied);state.selectedNode=null;state.sopScope='project';markWorkflowClean();
     $('#genericTemplateModal').classList.remove('open');

@@ -87,6 +87,16 @@
 .generic-structure span{padding:4px 9px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line);color:var(--muted);font-size:10.5px;font-weight:700}
 .generic-structure span.highlight{border-color:color-mix(in srgb,var(--blue) 34%,var(--line));background:var(--blue-soft);color:var(--blue)}
 .generic-requirement-head{display:flex;flex-direction:column;gap:3px;margin:16px 0 8px}
+.generic-executor{display:grid;gap:6px;margin:14px 0 4px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:var(--bg-soft)}
+.generic-executor-head{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.generic-executor-head label{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.generic-executor-head b{font-size:12px;color:var(--text)}
+.generic-executor-head span{font-size:10.5px;color:var(--muted-2);line-height:1.5}
+/* 不写死高度：基础 .select 自带 8px 上下内边距，固定高度会把中文裁掉下半截。 */
+.generic-executor .select{flex:0 0 auto;width:auto;min-width:210px;max-width:100%;height:auto;min-height:32px;padding:6px 10px;font-size:12.5px}
+.generic-executor-hint{margin:0;font-size:10.5px;color:var(--muted-2);line-height:1.5}
+.generic-executor-hint.is-warn{color:color-mix(in srgb,var(--amber) 80%,var(--text))}
+.generic-executor-hint[hidden]{display:none}
 .generic-requirement-head b{font-size:12px;color:var(--text)}
 .generic-requirement-head span{font-size:10.5px;color:var(--muted-2);line-height:1.5}
 .generic-requirements{display:grid;gap:8px}

@@ -52,7 +52,8 @@ Object.assign(window.LF_I18N_EN,{
 "AI 对话的 Kimi Code 模型与以 Kimi Code 运行的 SOP 节点":"Kimi Code models in AI chat, and SOP steps that run on Kimi Code",
 "AI 对话的 Pi 模型与以 Pi 运行的 SOP 节点":"Pi models in AI chat, and SOP steps that run on Pi",
 "AI 对话的 DeepSeek Harness 模型与以 DeepSeek Harness 运行的 SOP 节点":"DeepSeek Harness models in AI chat, and SOP steps that run on DeepSeek Harness",
-"AI 对话的 ZCode 模型与以 ZCode 运行的 SOP 节点":"ZCode models in AI chat, and SOP steps that run on ZCode"
+"AI 对话的 ZCode 模型与以 ZCode 运行的 SOP 节点":"ZCode models in AI chat, and SOP steps that run on ZCode",
+"AI 对话的 Qoder 模型与以 Qoder 运行的 SOP 节点":"Qoder models in AI chat, and SOP steps that run on Qoder"
 });
 Object.assign(window.LF_I18N_EN,{
 "继续回答关键问题，进度已经保存；不影响直接触发 SOP":"Keep answering the key questions. Progress is saved and does not block starting the SOP",
@@ -168,4 +169,38 @@ Object.assign(window.LF_I18N_EN,{
   "配置 Git SSH 密钥":"Configure Git SSH key",
   "请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。":"Enter a GitHub link or a Git SSH clone address. CNB supports HTTPS with an access token.",
   "粘贴 GitHub 链接或 Git SSH 地址":"Paste a GitHub link or Git SSH address"
+});
+
+Object.assign(window.LF_I18N_EN,{
+"服务器未安装":"Not installed on this server",
+"安装中":"Installing",
+"安装失败":"Install failed",
+"正在安装":"Installing",
+"安装在服务器上继续，关闭页面也不会中断。":"The install keeps running on the server after you close this page.",
+"安装失败，可以重试。":"The install failed; you can retry.",
+"对话和以它运行的 SOP 节点都需要它，先在这台服务器上装好再用。":"Chat and the SOP steps that run on it both need it, so install it on this server first.",
+"重试安装":"Retry install",
+"安装到服务器":"Install on server",
+"已安装在服务器上":"is installed on this server",
+"安装":"Install",
+"测试":"Test",
+"测试中":"Testing",
+"正在用这条配置跑一轮测试…":"Running one short turn with this configuration…",
+"连接正常":"Connection OK",
+"测试失败":"Test failed",
+"没有返回结果":"no result returned",
+"测试超时，请检查网络或服务地址":"The test timed out; check the network or the service address",
+"只能测试当前登录用户的凭据":"You can only test your own credentials",
+"无法创建测试目录":"Could not create the test directory",
+"测试这个模型":"Test this model",
+"用这条配置跑一轮测试":"Run one test turn with this configuration",
+"先填写模型 ID 再测试":"Enter a model ID before testing",
+"正在测试…":"testing…"
+});
+
+Object.assign(window.LF_I18N_EN,{
+"复制后执行器":"Executor after copy",
+"只影响复制出来的角色；直接运行仍使用平台模板（CodeBuddy）。":"Only affects the copied roles; Run directly still uses the platform template (CodeBuddy).",
+"复制后的运行依赖":"Run dependencies after copy",
+"以下按复制后的执行器检查；未配置时对应节点会在运行中降级或失败。凭证按任务责任人注入。":"These checks use the executor chosen for the copy. Missing credentials make the affected nodes degrade or fail during the run. Credentials come from the requirement owner."
 });

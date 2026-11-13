@@ -176,6 +176,8 @@ func NewAgentCLITranslator(kind string) func(string) []string {
 		translate = (&dshStream{}).translate
 	case AgentCLIZCode:
 		translate = (&zcodeStream{}).translate
+	case AgentCLIQoder:
+		translate = (&qoderStream{}).translate
 	default:
 		return nil
 	}
@@ -624,6 +626,70 @@ func (d *dshStream) translate(s *ClaudeStream, raw map[string]any) []string {
 		if failed && text == "" {
 			if text = d.failure; text == "" {
 				text = "DeepSeek Harness 运行结束：" + stringValue(reason["kind"])
+			}
+		}
+		return s.Result(text, failed)
+	}
+	return nil
+}
+
+// qoderStream: `qoder -p --output-format stream-json` emits Claude-style
+// stream-json natively: system/init, assistant message blocks, user
+// tool_results and a closing result line with snake_case usage totals.
+type qoderStream struct{}
+
+func (q *qoderStream) translate(s *ClaudeStream, raw map[string]any) []string {
+	switch stringValue(raw["type"]) {
+	case "system":
+		if stringValue(raw["subtype"]) == "init" {
+			return s.Init(stringValue(raw["session_id"]), stringValue(raw["model"]))
+		}
+	case "assistant":
+		message, _ := raw["message"].(map[string]any)
+		var out []string
+		for _, item := range sliceValue(message["content"]) {
+			part, _ := item.(map[string]any)
+			switch stringValue(part["type"]) {
+			case "text":
+				out = append(out, s.Text(stringValue(part["text"]))...)
+			case "thinking":
+				out = append(out, s.Thinking(stringValue(part["thinking"]))...)
+			case "tool_use":
+				out = append(out, s.ToolUse(stringValue(part["id"]), stringValue(part["name"]), part["input"])...)
+			}
+		}
+		return out
+	case "user":
+		message, _ := raw["message"].(map[string]any)
+		var out []string
+		for _, item := range sliceValue(message["content"]) {
+			part, _ := item.(map[string]any)
+			if stringValue(part["type"]) != "tool_result" {
+				continue
+			}
+			failed, _ := part["is_error"].(bool)
+			out = append(out, s.ToolResult(stringValue(part["tool_use_id"]), failed, contentText(part["content"]))...)
+		}
+		return out
+	case "result":
+		usage, _ := raw["usage"].(map[string]any)
+		s.SetUsage(int64Value(usage["input_tokens"]), int64Value(usage["output_tokens"]), int64Value(usage["cache_read_input_tokens"]), int64Value(usage["cache_creation_input_tokens"]), 0)
+		failed, _ := raw["is_error"].(bool)
+		text := stringValue(raw["result"])
+		if failed && text == "" {
+			var parts []string
+			for _, item := range sliceValue(raw["errors"]) {
+				if t := errorText(item); t != "" {
+					parts = append(parts, t)
+				}
+			}
+			if text = strings.Join(parts, "；"); text == "" {
+				if text = errorText(raw["error"]); text == "" {
+					text = errorText(raw)
+				}
+				if text == "" {
+					text = "Qoder 运行失败"
+				}
 			}
 		}
 		return s.Result(text, failed)

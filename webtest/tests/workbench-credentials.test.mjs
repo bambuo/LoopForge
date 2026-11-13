@@ -193,3 +193,87 @@ test('Git token verification rejects invalid tokens before save and accepts vali
   assert.equal(invalid.saved, false);
   assert.equal(valid.saved, true);
 });
+
+test('Qoder editor rides the official endpoint: catalog without Base URL or protocol', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const user = {
+    id: 1, username: 'tester',
+    agentCliCredentials: {
+      qoder: { apiKeyConfigured: true, models: [{ id: 'auto' }, { id: 'qoder3-max', name: 'Qoder3 Max' }] },
+    },
+  };
+  const kind = await app.evaluate(`credentialKind('agentCli.qoder')`);
+  assert.ok(kind, 'qoder credential kind exists');
+  assert.ok(kind.models, 'qoder exposes the model catalog');
+  assert.equal(kind.extra, undefined, 'qoder has no Base URL field');
+  assert.equal(kind.protocol, undefined, 'qoder has no protocol selector');
+
+  const html = await app.evaluate(`credentialEditorHTML(credentialKind('agentCli.qoder'), ${JSON.stringify(user)})`);
+  assert.match(html, /data-credential-catalog/);
+  assert.match(html, /data-catalog-mode="official"/);
+  assert.doesNotMatch(html, /name="extra"/);
+  assert.doesNotMatch(html, /name="protocol"/);
+  assert.match(html, /value="qoder3-max"/);
+
+  const subline = await app.evaluate(`credentialSubline(credentialKind('agentCli.qoder'), ${JSON.stringify(user)})`);
+  assert.match(subline, /2 个自定义模型/);
+
+  const payload = await app.evaluate(`credentialSavePayload(credentialKind('agentCli.qoder'), {secret:'qdr_pat', models:[{id:'auto',name:''},{id:'qoder3-max',name:'Qoder3 Max'}]})`);
+  // The payload crosses the vm realm, so compare by JSON structure.
+  assert.deepEqual(JSON.parse(JSON.stringify(payload.agentCliCredentials.qoder)), {
+    apiKey: 'qdr_pat',
+    models: [{ id: 'auto' }, { id: 'qoder3-max', name: 'Qoder3 Max' }],
+  });
+});
+
+test('个人配置 offers a server install for a CLI the host lacks', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.data.users[0].id=1;state.currentUser={...state.data.users[0],id:1,isGuest:false};state.data.users[0]=state.currentUser`);
+  app.router.get('/api/assistant/cli-install/status', {
+    engines: { kimi: { status: 'missing' }, dsh: { status: 'installed' }, qoder: { status: 'failed', error: 'boom' } },
+  });
+  await app.evaluate(`renderPersonalSettings()`);
+  await settle(4);
+
+  const kimi = app.document.querySelector('[data-credential-row="agentCli.kimi"]');
+  assert.match(kimi.textContent, /服务器未安装/);
+  const install = kimi.querySelector('[data-credential-act="cli-install"]');
+  assert.ok(install, 'a missing CLI gets the install shortcut');
+  assert.equal(install.dataset.cliEngine, 'kimi');
+
+  const installed = app.document.querySelector('[data-credential-row="agentCli.dsh"]');
+  assert.equal(installed.querySelector('[data-credential-act="cli-install"]'), null);
+  assert.doesNotMatch(installed.textContent, /服务器未安装/);
+
+  const failed = app.document.querySelector('[data-credential-row="agentCli.qoder"]');
+  assert.match(failed.querySelector('[data-credential-act="cli-install"]').textContent, /重试安装/);
+
+  // An engine outside the server's install allowlist (no status entry) stays quiet.
+  const zcode = app.document.querySelector('[data-credential-row="agentCli.zcode"]');
+  assert.equal(zcode.querySelector('[data-credential-act="cli-install"]'), null);
+  assert.doesNotMatch(zcode.textContent, /服务器未安装/);
+});
+
+test('每个模型行在自己删除按钮旁提供测试按钮', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.data.users[0].id=1;state.currentUser={...state.data.users[0],id:1,isGuest:false};state.data.users[0]=state.currentUser`);
+  await app.evaluate(`renderPersonalSettings()`);
+  await settle(3);
+  const kind = await app.evaluate(`credentialKind('agentCli.zcode')`);
+  const html = await app.evaluate(`credentialCatalogHTML(credentialKind('agentCli.zcode'), {agentCliCredentials:{zcode:{models:[{id:'glm-5.3'}]}}})`);
+  // 模型行里测试按钮紧跟删除按钮
+  assert.match(html, /data-catalog-act="test"[^>]*>[\s\S]*?data-catalog-act="remove"/);
+  assert.match(html, /data-catalog-test/);
+  // 整张卡的删除按钮边上不再有测试按钮
+  const row = app.evaluate(`(() => {
+    const kind = credentialKind('agentCli.zcode');
+    const user = {agentCliCredentials:{zcode:{apiKeyConfigured:true,models:[{id:'glm-5.3'}]}}};
+    return credentialEditorHTML(kind, user);
+  })()`);
+  const foot = row.slice(row.indexOf('credential-editor-foot'));
+  assert.doesNotMatch(foot.slice(0, foot.indexOf('credential-confirm')), /data-credential-act="cli-test"/);
+  assert.ok(kind);
+});

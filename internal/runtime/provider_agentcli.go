@@ -208,6 +208,26 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--resume", resume)
 		}
 		argv = append(argv, extra...)
+	case AgentCLIQoder:
+		// SOP nodes run in their own sandbox, so permissions stay open; AI
+		// 对话 keeps them open too and denies the tools that act outside the
+		// chat's MCP gateway by name.
+		argv = []string{binary, "-p", "--output-format", "stream-json", "--permission-mode", "bypass_permissions"}
+		// "auto"/"default" are abstract "CLI 默认模型" choices, not model IDs:
+		// the binary rejects the explicit flag for accounts without catalog
+		// models, so both mean "let the CLI pick".
+		if model != "" && model != "auto" && model != "default" {
+			argv = append(argv, "--model", model)
+		}
+		if resume != "" {
+			// --session-id only names a new session and rejects one already in
+			// use; --resume continues the previous turn.
+			argv = append(argv, "--resume", resume)
+		}
+		if o.Chat {
+			argv = append(argv, "--disallowed-tools", strings.Join(qoderChatDisallowedTools, ","))
+		}
+		argv = append(append(argv, extra...), prompt)
 	}
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
 }
@@ -236,6 +256,10 @@ func agyModelForEffort(model, effort string) string {
 	}
 	return model
 }
+
+// qoderChatDisallowedTools are Qoder's built-in tools that act outside the
+// chat's MCP gateway. Qoder follows the Claude-style tool names.
+var qoderChatDisallowedTools = []string{"Bash", "Edit", "Write", "WebFetch", "WebSearch", "Task", "NotebookEdit"}
 
 // kimiChatDisallowedTools are Kimi Code's tools that act outside the chat's
 // MCP gateway or spawn further agents.

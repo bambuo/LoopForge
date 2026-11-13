@@ -127,7 +127,7 @@ func (e assistantCredentialError) Is(target error) bool {
 	return target == errAssistantCredentialRejected
 }
 
-var assistantAuthFailureRe = regexp.MustCompile(`(?i)\b(401|403)\b|unauthorized|invalid api key|invalid x-api-key|authentication_error|incorrect api key`)
+var assistantAuthFailureRe = regexp.MustCompile(`(?i)\b(401|403)\b|unauthorized|invalid api key|invalid x-api-key|authentication_error|incorrect api key|failed to authenticate|authentication failed|token .{0,40}rejected`)
 
 func assistantAuthFailureText(text string) bool {
 	return assistantAuthFailureRe.MatchString(text)

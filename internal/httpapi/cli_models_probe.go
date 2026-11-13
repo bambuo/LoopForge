@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -83,6 +85,10 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		h.probeCursorModels(c, apiKey)
 		return
 	}
+	if engine == runtime.AgentCLIQoder {
+		h.probeQoderModels(c, apiKey)
+		return
+	}
 	if protocol == runtime.AgentCLIProtocolGemini {
 		baseURL = ""
 	}
@@ -134,6 +140,106 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 }
 
 var cursorModelLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) - (.+)$`)
+
+// probeQoderModels asks the qoder CLI itself: Qoder has no Base URL, and the
+// models behind a PAT depend on the account (official tiers plus BYOK rows).
+func (h *usersHandlers) probeQoderModels(c *gin.Context, apiKey string) {
+	if apiKey == "" {
+		c.JSON(http.StatusOK, cliModelProbeResult{Error: "请先填写 " + assistantEngineLabel(runtime.AgentCLIQoder) + " API Key"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	models, err := qoderAgentModels(ctx, apiKey)
+	if errors.Is(err, errAssistantCLIMissing) {
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIQoder)), Source: "builtin"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusOK, cliModelProbeResult{Error: "获取模型列表失败：" + err.Error()})
+		return
+	}
+	if len(models) == 0 {
+		// The CLI only lists the account's BYOK models; none means the
+		// official "auto" model is all the account offers.
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIQoder)), Source: "builtin"})
+		return
+	}
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "remote"})
+}
+
+var qoderModelLine = regexp.MustCompile(`^(.+?)\s*\(([^()]+)\)$`)
+
+// qoderAgentModels runs `qoder --list-models` in a throwaway HOME with only
+// the user's PAT, so no host Qoder login or configuration is visible to it.
+func qoderAgentModels(ctx context.Context, apiKey string) ([]domain.CLIModel, error) {
+	bin, err := resolveAssistantEngineBin(runtime.AgentCLIQoder)
+	if err != nil {
+		return nil, err
+	}
+	home, err := os.MkdirTemp("", "agentflow-qoder-models-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(home)
+	// A fresh settings file keeps the CLI from auto-updating mid-probe.
+	if err := os.MkdirAll(filepath.Join(home, ".qoder"), 0o700); err == nil {
+		settings, _ := json.Marshal(map[string]any{"autoUpdates": false})
+		_ = os.WriteFile(filepath.Join(home, ".qoder", "settings.json"), settings, 0o600)
+	}
+	env := []string{
+		"HOME=" + home, "QODER_CONFIG_DIR=" + filepath.ToSlash(filepath.Join(home, ".qoder")),
+		"QODER_PERSONAL_ACCESS_TOKEN=" + apiKey, "QODERCN_PERSONAL_ACCESS_TOKEN=" + apiKey,
+		"NO_COLOR=1", "CI=1",
+	}
+	for _, key := range []string{"PATH", "LANG", "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "all_proxy", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	cmd := exec.CommandContext(ctx, bin, "--list-models")
+	cmd.Dir, cmd.Env = home, env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, errors.New("Qoder CLI 响应超时")
+		}
+		text := strings.ToLower(string(out))
+		if strings.Contains(text, "not logged in") || assistantAuthFailureText(string(out)) {
+			return nil, assistantCredentialError{engine: runtime.AgentCLIQoder}
+		}
+		return nil, fmt.Errorf("qoder --list-models 退出：%v", err)
+	}
+	return parseQoderModels(string(out)), nil
+}
+
+// parseQoderModels reads `qoder --list-models`: the literal "MODEL" header,
+// bare built-in tier names (e.g. Efficient — the only usable model on some
+// accounts) and `name (model-id)` BYOK rows.
+func parseQoderModels(out string) []domain.CLIModel {
+	var models []domain.CLIModel
+	seen := map[string]bool{}
+	add := func(id, name string) {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		models = append(models, domain.CLIModel{ID: id, Name: strings.TrimSpace(name)})
+	}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "MODEL" {
+			continue
+		}
+		if match := qoderModelLine.FindStringSubmatch(line); match != nil {
+			add(match[2], match[1])
+			continue
+		}
+		add(line, line)
+	}
+	return models
+}
 
 // cursorAgentModels runs `cursor-agent models` in a throwaway HOME with only
 // the user's key, so no server token or stored CLI login is visible to it.

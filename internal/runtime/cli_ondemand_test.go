@@ -149,3 +149,47 @@ func TestInstallOnDemandClaudeCodeUsesPinnedRelease(t *testing.T) {
 		t.Fatalf("npm calls: %s", calls)
 	}
 }
+
+func TestNPMPackageSpecUsesLatestForBareNames(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		// A bare name is a `@*` range, which semver never resolves to a
+		// prerelease; DeepSeek Harness publishes only prereleases.
+		{"@deepseek-ai/dsh", "@deepseek-ai/dsh@latest"},
+		{"opencode-ai", "opencode-ai@latest"},
+		{"@moonshot-ai/kimi-code@0.2.3", "@moonshot-ai/kimi-code@0.2.3"},
+		{"  @qoder-ai/qodercli ", "@qoder-ai/qodercli@latest"},
+		{"", ""},
+	} {
+		if got := npmPackageSpec(tc.in); got != tc.want {
+			t.Errorf("npmPackageSpec(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestOnDemandSandboxBinDirOnlyCoversTheMountedCLIDir(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", root)
+	install := func(engine, bin string) string {
+		t.Helper()
+		dir := filepath.Join(root, engine, "current", "node_modules", ".bin")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, bin)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	qoderBin := install("qoder", "qoder")
+	if got := onDemandSandboxBinDir("qoder"); got != filepath.Dir(qoderBin) {
+		t.Fatalf("qoder bin dir %q", got)
+	}
+	// Not installed: nothing to put on PATH, the image provides its own.
+	if got := onDemandSandboxBinDir("kimi"); got != "" {
+		t.Fatalf("missing engine %q", got)
+	}
+	if got := onDemandSandboxBinDir("codebuddy"); got != "" {
+		t.Fatalf("unknown engine %q", got)
+	}
+}

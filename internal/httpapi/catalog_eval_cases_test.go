@@ -533,7 +533,7 @@ func TestCatalogMCPAndGenericHelperBranches(t *testing.T) {
 	if got := h.genericTemplateSandbox("missing", "platform"); got == "" {
 		t.Fatal("fallback sandbox not selected")
 	}
-	if _, err := h.adoptGenericWorkflow(domain.WorkflowDefinition{}, "id", "name", "", "missing"); err == nil {
+	if _, err := h.adoptGenericWorkflow(domain.WorkflowDefinition{}, "id", "name", "", "missing", ""); err == nil {
 		t.Fatal("adoption into missing project accepted")
 	}
 

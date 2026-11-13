@@ -146,6 +146,12 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
 			},
 		},
+		// Qoder resolves its own model when --model is absent, so "auto" is the
+		// catalog entry that lets AI 对话 select the CLI. The command drops the
+		// flag because some accounts reject an explicit "auto".
+		"qoder": {CustomModel: true, Models: []executorModelInfo{
+			{ID: "auto", Name: "Auto（Qoder 默认）"},
+		}},
 	}
 }
 

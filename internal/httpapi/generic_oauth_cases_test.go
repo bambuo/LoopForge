@@ -18,13 +18,13 @@ import (
 func TestGenericWorkflowHelperBranches(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	h := &catalogHandlers{deps: &deps{repo: f.s}}
-	if _, err := h.adoptGenericWorkflow(domain.WorkflowDefinition{}, "id", "name", "", ""); err == nil {
+	if _, err := h.adoptGenericWorkflow(domain.WorkflowDefinition{}, "id", "name", "", "", ""); err == nil {
 		t.Fatal("blank target project accepted")
 	}
-	if _, err := h.adoptGenericWorkflow(domain.WorkflowDefinition{}, "id", "name", "", "missing"); err == nil {
+	if _, err := h.adoptGenericWorkflow(domain.WorkflowDefinition{}, "id", "name", "", "missing", ""); err == nil {
 		t.Fatal("missing target project accepted")
 	}
-	if _, err := h.cloneGenericTemplateAgents("missing", "platform"); err == nil {
+	if _, err := h.cloneGenericTemplateAgents("missing", "platform", ""); err == nil {
 		t.Fatal("missing generic template accepted")
 	}
 

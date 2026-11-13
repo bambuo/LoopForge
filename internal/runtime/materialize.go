@@ -427,7 +427,11 @@ func mcpConfigEntries(servers []domain.MCPServerDefinition) (map[string]any, err
 			}
 		} else {
 			entry["command"] = m.Command
-			entry["args"] = m.Args
+			// A nil slice would marshal as null; Qoder skips a server whose
+			// args are not an array.
+			if len(m.Args) > 0 {
+				entry["args"] = m.Args
+			}
 			if cwd := MCPRuntimeWorkingDirectory(m); cwd != "" {
 				entry["cwd"] = cwd
 			}

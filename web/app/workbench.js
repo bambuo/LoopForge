@@ -64,14 +64,14 @@ const CREDENTIAL_KINDS=[
     impact:'依赖私有仓库的 SOP 将无法克隆或推送仓库。'},
   {key:'gitSshKey',group:'platform',name:'Git SSH',short:'Git SSH 密钥',icon:'key',
     use:'按 SSH 主机管理个人密钥，仓库自动匹配'},
-  {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
+  {key:'codeBuddyApiKey',group:'model',cli:'codebuddy',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
     use:'AI 对话与 SOP 的 CodeBuddy 执行器',
     description:'AI 对话（含 Claude、GPT 等模型）和 SOP 的 CodeBuddy 执行器都使用它；网络环境按账号所在环境配置。',
     guide:[['先在下方选择 CodeBuddy 账号所在的网络环境：国际站、国内站或 iOA'],['登录该站点的 API Key 页面，新建 API Key',codeBuddyKeyURL,codeBuddyKeyLinkLabel],['复制以 <code>ck_</code> 开头的密钥粘贴到下方；DeepSeek、OpenAI 等第三方模型的 Key 不能填在这里']],
     placeholder:'请输入个人 ck_ key',
     extra:{name:'codeBuddyInternetEnvironment',label:'网络环境',options:CODEBUDDY_ENVIRONMENTS},
     impact:'AI 对话将只能使用默认模型，CodeBuddy 执行器节点会失败。'},
-  {key:'codexApiKey',group:'model',name:'Codex',short:'Codex API Key',logo:'codex',monochrome:true,
+  {key:'codexApiKey',group:'model',cli:'codex',name:'Codex',short:'Codex API Key',logo:'codex',monochrome:true,
     use:'AI 对话选择 Codex 执行器，以及以 Codex 运行的 SOP 节点',
     description:'AI 对话切换到 Codex 后可选用模型目录里的模型，SOP 在执行机器上以 Codex 运行的节点也使用它。目录为空时，未填 Base URL 使用 Codex 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
     guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL；保存后可在模型目录里挑选 AI 对话的模型']],
@@ -79,7 +79,7 @@ const CREDENTIAL_KINDS=[
     extra:{name:'codexBaseUrl',label:'Base URL',placeholder:'https://api.openai.com/v1',url:true,clearWithKey:true},
     models:{name:'codexModels',engine:'codex',endpoint:'/models'},
     impact:'以 Codex 运行的 SOP 节点将无法执行，Base URL 与模型目录一并清空。'},
-  {key:'claudeCodeApiKey',group:'model',name:'Claude Code',short:'Claude Code API Key',logo:'claude',monochrome:true,
+  {key:'claudeCodeApiKey',group:'model',cli:'claude-code',name:'Claude Code',short:'Claude Code API Key',logo:'claude',monochrome:true,
     use:'AI 对话选择 Claude 执行器，以及以 Claude Code 运行的 SOP 节点',
     description:'AI 对话切换到 Claude Code 后可选用模型目录里的模型，SOP 在执行机器上以 Claude Code 运行的节点也使用它。目录为空时，未填 Base URL 使用 Claude Code 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
     guide:[['在模型服务商控制台创建 API Key'],['如走代理或私有网关，记下服务地址'],['粘贴 Key，按需填写 Base URL；保存后可在模型目录里挑选 AI 对话的模型']],
@@ -104,10 +104,12 @@ const CREDENTIAL_KINDS=[
     note:'未填写 Base URL 时连接 DeepSeek 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
   agentCliCredentialKind('zcode',{name:'ZCode',logo:'glm',baseUrl:'https://open.bigmodel.cn/api/anthropic',
     note:'未填写 Base URL 时连接智谱 BigModel 的 Anthropic 兼容服务（Messages）。',protocols:[['messages','Messages（Anthropic）'],['chat','Chat Completions'],['responses','Responses']]}),
+  agentCliCredentialKind('qoder',{name:'Qoder',logo:'qoder',monochrome:true,catalog:true,
+    note:'Qoder 连接官方服务，使用其自带模型；可在模型目录里改选，也可在角色里指定模型 ID。'}),
 ];
 function agentCliCredentialKind(cli,o){
-  const field=`agentCli.${cli}.`,configurable=!!o.protocols;
-  return {key:`agentCli.${cli}`,agentCli:cli,group:'model',name:o.name,short:`${o.name} API Key`,logo:o.logo,monochrome:!!o.monochrome,
+  const field=`agentCli.${cli}.`,configurable=!!o.protocols,catalog=configurable||!!o.catalog;
+  return {key:`agentCli.${cli}`,agentCli:cli,cli,group:'model',name:o.name,short:`${o.name} API Key`,logo:o.logo,monochrome:!!o.monochrome,
     use:`AI 对话的 ${o.name} 模型与以 ${o.name} 运行的 SOP 节点`,
     description:`AI 对话切换到 ${o.name} 后可选用它的模型，SOP 在执行机器上以 ${o.name} 运行的节点也使用它。${o.note||''}`,
     guide:o.guide||[['在模型服务商控制台创建 API Key'],['记下服务地址和它提供的接口协议'],['粘贴 Key，按需填写 Base URL 并选择协议；保存后可在模型目录里挑选 AI 对话的模型']],
@@ -115,13 +117,114 @@ function agentCliCredentialKind(cli,o){
     ...(configurable?{
       extra:{name:field+'baseUrl',label:'Base URL',placeholder:o.baseUrl,url:true,clearWithKey:true,required:o.required,note:o.extraNote||(o.required?'必填':'')},
       protocol:{name:field+'protocol',options:o.protocols},
-      models:{name:field+'models',engine:cli},
     }:{}),
+    ...(catalog?{models:{name:field+'models',engine:cli}}:{}),
     impact:`AI 对话将不能再切换到 ${o.name}，以 ${o.name} 运行的 SOP 节点将无法执行${configurable?'，Base URL、协议与模型目录一并清空':''}。`};
 }
 function credentialValue(user,name){
   const [scope,cli,field]=String(name).split('.');
   return scope==='agentCli'&&field?user?.agentCliCredentials?.[cli]?.[field]:user?.[name];
+}
+// ---- CLI 在服务器上的安装状态（个人配置直接提供安装按钮）----
+// The server keeps an allowlist (internal/runtime/cli_ondemand.go); this page
+// reports which of those engines are already executable on the host.
+function credentialCLI(kind){return kind?.cli||''}
+function credentialInstallInfo(kind){
+  const engine=credentialCLI(kind);
+  return engine&&state.cliInstall?state.cliInstall[engine]||null:null;
+}
+async function loadCredentialCLIInstall(){
+  if(!state.currentUser||state.currentUser.isGuest)return;
+  try{
+    const data=await api('/api/assistant/cli-install/status',{silent:true});
+    state.cliInstall=(data&&data.engines)||{};
+    state.cliInstallLoaded=true;
+  }catch{return}
+  document.querySelectorAll('#credentialPanel [data-credential-row]').forEach(row=>{
+    repaintCredentialInstall(row.dataset.credentialRow);
+    repaintCredentialRow(row.dataset.credentialRow);
+  });
+}
+function repaintCredentialInstall(key){
+  const row=$(`#credentialPanel [data-credential-row="${key}"]`),kind=credentialKind(key);
+  const host=row?.querySelector('[data-credential-install]');if(!host||!kind)return;
+  host.outerHTML=credentialInstallHTML(kind);
+  hydrateCredentialIcons(row);
+}
+function credentialInstallHTML(kind){
+  const engine=credentialCLI(kind),info=credentialInstallInfo(kind),status=info?.status||'';
+  // Only a known state is worth a row: an engine outside the server's install
+  // allowlist (no status entry) has no button to offer.
+  const known=status==='missing'||status==='failed'||status==='installing';
+  if(!engine||!state.cliInstallLoaded||!known)return `<div data-credential-install hidden></div>`;
+  const name=escapeHTML(kind.name),failed=status==='failed',busy=status==='installing';
+  const detail=busy?'安装在服务器上继续，关闭页面也不会中断。'
+    :failed?escapeHTML(info.error||'安装失败，可以重试。')
+    :'对话和以它运行的 SOP 节点都需要它，先在这台服务器上装好再用。';
+  const action=busy?''
+    :`<button type="button" class="credential-btn secondary credential-ink" data-credential-act="cli-install" data-cli-engine="${escapeHTML(engine)}">${failed?'重试安装':'安装到服务器'}</button>`;
+  return `<div class="credential-note is-warn credential-install" data-credential-install data-cli-engine="${escapeHTML(engine)}">${credentialGlyph('alert',14)}<span><b>${busy?'正在安装':(failed?'安装失败':'服务器未安装')}</b> <code>${name}</code> · <small>${detail}</small></span>${action}</div>`;
+}
+// ---- 模型行里的「测试」：用这条配置真实跑一轮最小对话 ----
+// A model listing can succeed while the endpoint still cannot answer, so the
+// test runs one short turn with the form's unsaved values and stores nothing.
+// Each row is tested on its own ID, and the outcome stays in state so a
+// repaint does not erase it.
+async function testCredentialCatalogModel(row,catalog,button){
+  const kind=credentialKind(row?.dataset.credentialRow),engine=credentialCLI(kind);
+  const modelRow=button?.closest('[data-catalog-row]');
+  const modelId=String(modelRow?.querySelector('[data-catalog-field="id"]')?.value||'').trim();
+  if(!engine||!modelRow)return;
+  if(!modelId){toast('先填写模型 ID 再测试','err');modelRow.querySelector('[data-catalog-field="id"]')?.focus();return}
+  const form=row.querySelector('.credential-editor-form');
+  const secret=form?.querySelector('[name="secret"]')?.value.trim()||'';
+  const extra=form?.querySelector('input[name="extra"]');
+  const protocol=form?.querySelector('select[name="protocol"]');
+  const line=catalog.querySelector('[data-catalog-test]');
+  const key=row.dataset.credentialRow;
+  const remember=(text,tone)=>{
+    (state.credentialTest||(state.credentialTest={}))[key]={model:modelId,text,tone};
+    const node=`<p class="credential-vline ${tone||''}" data-catalog-test>${escapeHTML(text)}</p>`;
+    const fresh=catalog.querySelector('[data-catalog-test]');
+    if(fresh)fresh.outerHTML=node;
+    else if(line)line.outerHTML=node;
+    hydrateCredentialIcons(catalog.querySelector('[data-catalog-test]'));
+  };
+  remember(`${modelId} · 正在测试…`,'is-info');
+  setCredentialButtonBusy(button,'');
+  button.disabled=true;
+  let result;
+  try{
+    result=await api(`/api/users/${state.currentUser.id}/cli-test`,{method:'POST',silent:true,body:JSON.stringify({
+      engine,model:modelId,apiKey:secret,
+      ...(extra?{baseUrl:extra.value.trim()}:{}),
+      ...(protocol?{protocol:protocol.value}:{}),
+    })});
+  }catch(err){result={error:err.message}}
+  button.disabled=false;
+  if(result?.ok){
+    const reply=String(result.reply||'').replace(/\s+/g,' ').trim();
+    remember(`${modelId} · 连接正常 · ${Number(result.latencyMs)||0} ms${reply?` · 回复「${reply.slice(0,30)}」`:''}`,'is-ok');
+  }else{
+    remember(`${modelId} · 测试失败 · ${result?.error||'没有返回结果'}`,'is-err');
+  }
+}
+async function installCredentialCLI(row,button){
+  const kind=credentialKind(row.dataset.credentialRow),engine=credentialCLI(kind);
+  if(!engine)return;
+  const key=row.dataset.credentialRow;
+  state.cliInstall={...(state.cliInstall||{}),[engine]:{status:'installing'}};
+  repaintCredentialInstall(key);
+  // The shortcut sits on the collapsed row, so repaint it too: the click has
+  // to show 安装中 long before npm finishes on the server.
+  repaintCredentialRow(key);
+  try{
+    await api('/api/assistant/cli-install',{method:'POST',body:JSON.stringify({engine}),silent:true});
+    toast(`${kind.name} 已安装在服务器上`);
+  }catch(err){
+    toast(err.message||'安装失败','err');
+  }
+  await loadCredentialCLIInstall();
 }
 function credentialProtocol(kind,user){
   const options=kind.protocol?.options||[],value=credentialValue(user,kind.protocol?.name||'');
@@ -158,7 +261,7 @@ function credentialCatalogError(models){
   return null;
 }
 function credentialCatalogRowHTML(model={}){
-  return `<li class="credential-catalog-row" data-catalog-row><button type="button" class="credential-catalog-grip" data-catalog-grip aria-label="拖动排序，也可以按 ↑ ↓ 移动">${credentialGlyph('grip',14)}</button><span class="credential-input is-plain"><input class="credential-mono" data-catalog-field="id" value="${escapeHTML(model.id||'')}" placeholder="模型 ID，如 gpt-5.5" aria-label="模型 ID" autocomplete="off" spellcheck="false"></span><span class="credential-input is-plain"><input data-catalog-field="name" value="${escapeHTML(model.name||'')}" placeholder="显示名称（可选）" aria-label="显示名称" autocomplete="off"></span><button type="button" class="credential-btn ghost icon danger credential-ink" data-catalog-act="remove" aria-label="移除模型">${credentialGlyph('trash',14)}</button></li>`;
+  return `<li class="credential-catalog-row" data-catalog-row><button type="button" class="credential-catalog-grip" data-catalog-grip aria-label="拖动排序，也可以按 ↑ ↓ 移动">${credentialGlyph('grip',14)}</button><span class="credential-input is-plain"><input class="credential-mono" data-catalog-field="id" value="${escapeHTML(model.id||'')}" placeholder="模型 ID，如 gpt-5.5" aria-label="模型 ID" autocomplete="off" spellcheck="false"></span><span class="credential-input is-plain"><input data-catalog-field="name" value="${escapeHTML(model.name||'')}" placeholder="显示名称（可选）" aria-label="显示名称" autocomplete="off"></span><button type="button" class="credential-btn ghost icon credential-ink" data-catalog-act="test" aria-label="测试这个模型" title="用这条配置跑一轮测试">${credentialGlyph('flask',14)}</button><button type="button" class="credential-btn ghost icon danger credential-ink" data-catalog-act="remove" aria-label="移除模型">${credentialGlyph('trash',14)}</button></li>`;
 }
 function credentialCatalogCopy(official,kind){
   const name=kind?.name||'该 CLI';
@@ -171,19 +274,25 @@ function credentialCatalogDetailHTML(official,kind,protocol){
   return official?escapeHTML(copy.detail):`目录为空时，AI 对话列出 Base URL 的 <code data-catalog-endpoint>${escapeHTML(credentialModelsEndpoint(kind,protocol))}</code> 返回的模型。`;
 }
 function credentialCatalogHTML(kind,user){
-  const baseUrl=credentialValue(user,kind.extra.name),protocol=credentialProtocol(kind,user);
+  const baseUrl=kind.extra?credentialValue(user,kind.extra.name):'',protocol=credentialProtocol(kind,user);
   const models=credentialCatalogModels(credentialValue(user,kind.models.name)),empty=!models.length,official=!String(baseUrl||'').trim()||protocol==='gemini';
   const copy=credentialCatalogCopy(official,kind);
   return `<section class="credential-catalog" data-credential-catalog data-catalog-mode="${official?'official':'remote'}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
     <div class="credential-catalog-body" data-catalog-body>
     <div class="credential-catalog-head"><div><b>模型目录</b><small data-catalog-count>${credentialCatalogCountText(models.length)}</small></div><div><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="probe">${credentialGlyph('download',14)}<span>获取可用模型</span></button><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="add"><span class="credential-turn">${credentialGlyph('plus',14)}</span><span>添加模型</span></button></div></div>
     <div class="credential-catalog-probe" data-catalog-probe hidden></div>
+    ${credentialCatalogTestHTML(kind)}
     <ol class="credential-catalog-list" data-catalog-list${empty?' hidden':''}>${models.map(credentialCatalogRowHTML).join('')}</ol>
     <div class="credential-catalog-empty" data-catalog-empty${empty?'':' hidden'}>${credentialGlyph('layers',16)}<div><b data-catalog-empty-title>${escapeHTML(copy.title)}</b><small data-catalog-empty-detail>${credentialCatalogDetailHTML(official,kind,protocol)}</small></div></div>
     <div class="credential-catalog-foot" data-catalog-foot${empty?' hidden':''}><button type="button" class="credential-btn link credential-ink" data-catalog-act="reset">${credentialGlyph('undo',13)}<span>恢复默认</span></button><small data-catalog-reset-note>${escapeHTML(copy.reset)}</small></div>
     </div>
     <span class="credential-sr" data-catalog-live role="status" aria-live="polite"></span>
   </section>`;
+}
+function credentialCatalogTestHTML(kind){
+  const test=state.credentialTest?.[kind?.key];
+  return test?`<p class="credential-vline ${test.tone||''}" data-catalog-test>${escapeHTML(test.text)}</p>`
+    :`<p class="credential-vline" data-catalog-test hidden></p>`;
 }
 function credentialCatalogSource(baseUrl){return String(baseUrl||'').trim().replace(/\/+$/,'')}
 function credentialCatalogCountText(count){return count?`${count} 个模型 · AI 对话按此顺序列出`:'未自定义'}
@@ -192,8 +301,9 @@ function credentialCatalogRowModel(row){return {id:row.querySelector('[data-cata
 function credentialCatalogFilledRows(catalog){return credentialCatalogRows(catalog).filter(row=>credentialCatalogModels([credentialCatalogRowModel(row)]).length)}
 function readCredentialCatalog(catalog){return credentialCatalogModels(credentialCatalogRows(catalog).map(credentialCatalogRowModel))}
 function credentialCatalogOfficial(catalog){
-  const form=catalog?.closest('.credential-editor-form'),extra=form?.querySelector('input[name="extra"]');
-  return (!!extra&&!extra.value.trim())||form?.querySelector('select[name="protocol"]')?.value==='gemini';
+  const form=catalog?.closest('.credential-editor-form'),extra=form?.querySelector('input[name="extra"]'),protocol=form?.querySelector('select[name="protocol"]')?.value;
+  // A form without Base URL and protocol (Qoder) always rides the official endpoint.
+  return (extra?!extra.value.trim():!protocol)||protocol==='gemini';
 }
 function credentialCatalogDirty(catalog){return !!catalog&&credentialCatalogKey(readCredentialCatalog(catalog))!==catalog.dataset.originalKey}
 function credentialCatalogPayload(catalog){
@@ -280,7 +390,8 @@ function credentialCatalogProbeHTML(catalog,kind){
     return `<label class="credential-catalog-pick" data-pick="${escapeHTML((model.id+' '+(model.name||'')).toLowerCase())}"><input type="checkbox" value="${escapeHTML(model.id)}"${checked?' checked':''}><code>${escapeHTML(model.id)}</code>${model.name&&model.name!==model.id?`<small>${escapeHTML(model.name)}</small>`:''}${listed?'<em>已在目录</em>':''}</label>`;
   }).join('');
   const protocol=catalog.closest('.credential-editor-form')?.querySelector('select[name="protocol"]')?.value;
-  const source=probe.source==='builtin'?'以下是内置模型':`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`;
+  const hasBaseURL=!!catalog.closest('.credential-editor-form')?.querySelector('input[name="extra"]');
+  const source=probe.source==='builtin'?'以下是内置模型':(hasBaseURL?`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`:'以下是 CLI 报告的模型清单');
   return `<div class="credential-catalog-probe-top"><span class="credential-input is-plain is-search">${credentialGlyph('search',14)}<input data-catalog-search placeholder="搜索模型" aria-label="搜索模型" autocomplete="off" spellcheck="false"></span><span class="credential-catalog-picked" data-catalog-picked></span><button type="button" class="credential-btn link credential-ink" data-catalog-act="toggle-all">全选</button></div>
     <div class="credential-catalog-probe-list" role="group" aria-label="可用模型">${items}</div>
     <div class="credential-catalog-probe-foot"><small>${source} · 勾选的模型会加入目录，取消勾选会移出</small><div><button type="button" class="credential-btn ghost credential-ink" data-catalog-act="probe-close">取消</button><button type="button" class="credential-btn primary credential-ink" data-catalog-act="probe-apply">更新列表</button></div></div>`;
@@ -374,6 +485,7 @@ function credentialCatalogAction(action,row,catalog,button){
   if(action==='probe-close'){closeCredentialCatalogProbe(catalog);catalog.querySelector('[data-catalog-act="probe"]')?.focus({preventScroll:true});return}
   if(action==='toggle-all')return toggleCredentialCatalogProbe(catalog);
   if(action==='probe-apply')return applyCredentialCatalogProbe(catalog);
+  if(action==='test')return testCredentialCatalogModel(row,catalog,button);
 }
 // Platform features depend on these, in the order people should configure them.
 const CREDENTIAL_RECOMMENDED=['gitToken','codeBuddyApiKey'];
@@ -495,6 +607,10 @@ function credentialSubline(kind,user){
     const protocol=kind.protocol?kind.protocol.options.find(([id])=>id===credentialProtocol(kind,user))?.[1]:'';
     return (baseUrl?`<span class="credential-mono">${escapeHTML(baseUrl)}</span>`:'<span>官方地址</span>')+(protocol?dot+`<span>${escapeHTML(protocol)}</span>`:'')+(models?dot+`<span>${models} 个自定义模型</span>`:'')+dot+use;
   }
+  if(kind.models){
+    const models=credentialCatalogModels(credentialValue(user,kind.models.name)).length;
+    return (models?`<span>${models} 个自定义模型</span>${dot}`:'')+use;
+  }
   return use;
 }
 function credentialFieldHTML({label,note='',name,type='password',value='',placeholder='',hint='',hintTone='',id='',multiline=false}){
@@ -554,6 +670,7 @@ function credentialEditorHTML(kind,user){
   const protocolField=kind.protocol?credentialProtocolHTML(kind,protocolValue):'';
   const legacy=!!(kind.extra?.options&&codeBuddyEnvironmentLegacy(user[kind.extra.name]));
   return `<div class="credential-editor-form${kind.models?' has-catalog':''}"${kind.extra?` data-original="${escapeHTML(extraValue)}"`:''}${kind.protocol?` data-original-protocol="${escapeHTML(protocolValue)}"`:''}${legacy?' data-legacy="true"':''}>
+    ${credentialInstallHTML(kind)}
     ${credentialFieldHTML({label:kind.short,note:'已配置 · 留空则不改',name:'secret',placeholder:'输入新值以替换',hint:kind.hint||''})}
     ${extraField}
     ${protocolField}
@@ -568,9 +685,25 @@ function credentialRowMainHTML(kind,user){
   const ssh=kind.key==='gitSshKey',on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key,status=credentialStatus(kind,user);
   const end=on&&!ssh
     ?`${credentialBadgeHTML(status)}${kind.key==='gitToken'?`<span class="credential-tip" data-tip="重新校验"><button type="button" class="credential-btn ghost icon credential-ink git-token-verify" data-credential-act="verify" aria-label="重新校验"${status==='busy'?' disabled':''}>${credentialGlyph('refresh',15)}</button></span>`:''}<span class="credential-chevron">${credentialGlyph('chevron-down',16)}</span>`
-    :`${credentialBadgeHTML(status)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup"${ssh?' aria-haspopup="dialog"':''}>${ssh?'管理密钥':'去配置'}<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
+    :`${credentialBadgeHTML(status)}${credentialInstallButtonHTML(kind)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup"${ssh?' aria-haspopup="dialog"':''}>${ssh?'管理密钥':'去配置'}<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
   const interaction=ssh?'':` role="button" tabindex="0"${on?` aria-expanded="${open}"`:''}`;
-  return `<div class="credential-row-main credential-ink"${interaction}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}<span>${escapeHTML(kind.short)}</span></b><small>${credentialSubline(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
+  return `<div class="credential-row-main credential-ink"${interaction}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}<span>${escapeHTML(kind.short)}</span></b><small>${credentialSublineHTML(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
+}
+// An unconfigured card has no editor yet, so the install shortcut lives on the
+// row itself; a configured card carries the same action inside its editor.
+function credentialInstallButtonHTML(kind){
+  const engine=credentialCLI(kind),info=credentialInstallInfo(kind),status=info?.status||'';
+  if(!state.cliInstallLoaded||!engine||status==='installed'||!status)return '';
+  if(status==='installing')return `<button type="button" class="credential-btn ghost credential-ink" disabled>安装中</button>`;
+  return `<button type="button" class="credential-btn ghost credential-ink" data-credential-act="cli-install" data-cli-engine="${escapeHTML(engine)}">${status==='failed'?'重试安装':'安装'}</button>`;
+}
+// The collapsed row names a missing server CLI, so the install state shows
+// before the card is opened.
+function credentialSublineHTML(kind,user){
+  const html=credentialSubline(kind,user),info=credentialInstallInfo(kind),status=info?.status||'';
+  if(!state.cliInstallLoaded||!credentialCLI(kind)||!status||status==='installed')return html;
+  const text=status==='installing'?'安装中':(status==='failed'?'安装失败':'服务器未安装');
+  return `<span class="is-warn">${text}</span><i class="credential-dot"></i>${html}`;
 }
 function credentialRowHTML(kind,user){
   const on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key;
@@ -800,6 +933,7 @@ function credentialRowAction(action,row,button){
   if(action==='delete')return showCredentialPane(row,'confirm');
   if(action==='undelete')return showCredentialPane(row,'bar',gongfeng?'[data-credential-act="delete"]':'');
   if(action==='confirm-delete')return confirmDeleteCredential(row,button);
+  if(action==='cli-install')return installCredentialCLI(row,button);
   if(action==='save')return submitCredentialEditor(row,button);
 }
 function setCredentialFilter(panel,filter){
@@ -1183,6 +1317,7 @@ async function renderPersonalSettings(){
   setTimeout(()=>panel.classList.remove('is-entering'),900);
   // Offer the OAuth shortcut only when the server has a Gongfeng application.
   api('/api/auth/gongfeng',{silent:true}).then(capability=>{state.gongfengOAuthEnabled=!!capability?.enabled;document.querySelectorAll('[data-gongfeng-oauth]').forEach(el=>{el.hidden=!state.gongfengOAuthEnabled})}).catch(()=>{});
+  loadCredentialCLIInstall();
   if(storedUser.gitTokenConfigured){
     const cached=gitTokenVerifyFor(user);
     if(!cached||(cached.busy&&!state.gitTokenVerifyInFlight)){state.gitTokenVerifyInFlight=true;refreshGitTokenStatus().finally(()=>{state.gitTokenVerifyInFlight=false})}

@@ -41,6 +41,7 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 		"kimi":        {Engine: "kimi", Binary: "kimi", Package: "@moonshot-ai/kimi-code"},
 		"pi":          {Engine: "pi", Binary: "pi", Package: "@earendil-works/pi-coding-agent"},
 		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh", RelaxEngines: true},
+		"qoder":       {Engine: "qoder", Binary: "qoder", Package: "@qoder-ai/qodercli"},
 	}
 }
 
@@ -49,6 +50,19 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 func OnDemandInstallable(engine string) bool {
 	_, ok := onDemandCLICatalog()[engine]
 	return ok
+}
+
+// OnDemandCLIEngines lists the allowlisted engines in display order, so a
+// settings page can show which ones this server already has.
+func OnDemandCLIEngines() []string {
+	catalog := onDemandCLICatalog()
+	engines := []string{"codebuddy", "codex", "claude-code"}
+	for _, kind := range AgentCLIKinds {
+		if _, ok := catalog[kind]; ok {
+			engines = append(engines, kind)
+		}
+	}
+	return engines
 }
 
 // OnDemandCLIPath returns the executable installed for engine, when one is
@@ -124,6 +138,25 @@ func onDemandCLILabel(engine string) string {
 	}
 }
 
+// npmPackageSpec turns a bare package name into `name@latest`. A bare name is
+// a `@*` range, and semver's `*` never matches a prerelease: packages that
+// only publish prereleases (DeepSeek Harness) fail with ETARGET. The `latest`
+// dist-tag resolves those exactly like npm would for a stable package.
+func npmPackageSpec(pkg string) string {
+	pkg = strings.TrimSpace(pkg)
+	if pkg == "" {
+		return pkg
+	}
+	tail := pkg
+	if i := strings.LastIndex(pkg, "/"); i >= 0 {
+		tail = pkg[i+1:] // an @scope/ prefix is not a version
+	}
+	if strings.Contains(tail, "@") {
+		return pkg // already pinned by the catalog
+	}
+	return pkg + "@latest"
+}
+
 func installNPMCLI(ctx context.Context, spec onDemandCLI) (string, error) {
 	root := RuntimeCLIDir()
 	if root == "" {
@@ -150,7 +183,7 @@ func installNPMCLI(ctx context.Context, spec onDemandCLI) (string, error) {
 	} else {
 		args = append(args, "--engine-strict")
 	}
-	args = append(args, spec.Package)
+	args = append(args, npmPackageSpec(spec.Package))
 	cmd := exec.CommandContext(ctx, "npm", args...)
 	cmd.Dir = stage
 	if out, err := cmd.CombinedOutput(); err != nil {

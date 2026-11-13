@@ -29,7 +29,7 @@ const modelBrands = [
 ];
 const fallbackBrands = new Set([
   "codebuddy", "cursor", "opencode", "openrouter", "siliconflow", "trae",
-  "github", "gitlab",
+  "qoder", "github", "gitlab",
 ]);
 const colorBrands = new Set([
   "qwen", "doubao", "siliconflow", "minimax", "zhipu", "hunyuan", "qianfan",

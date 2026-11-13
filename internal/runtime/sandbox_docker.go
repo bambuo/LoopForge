@@ -197,13 +197,42 @@ fi
 // image, which does not bundle it, and returns the mounted bin directory. It is
 // appended to PATH so a CLI shipped by an older image still takes precedence.
 func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec) (string, error) {
-	if command.Provider != "claude-code" || len(command.Argv) == 0 || command.Argv[0] != "claude" || RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
+	if RuntimeCLIDir() == "" || isolatedRuntimeImage(s.dockerfile) == "" {
 		return "", nil
 	}
-	if _, err := EnsureClaudeCode(ctx); err != nil {
-		return "", err
+	if command.Provider == "claude-code" {
+		if len(command.Argv) == 0 || command.Argv[0] != "claude" {
+			return "", nil
+		}
+		if _, err := EnsureClaudeCode(ctx); err != nil {
+			return "", err
+		}
+		return ClaudeCodeBinDir(), nil
 	}
-	return ClaudeCodeBinDir(), nil
+	return onDemandSandboxBinDir(command.Provider), nil
+}
+
+// onDemandSandboxBinDir returns the mounted bin directory of a CLI the platform
+// installed on demand (个人配置 → 安装), so docker exec can put it on PATH. The
+// runtime CLI directory is bind-mounted into the sandbox read-only; a CLI
+// installed anywhere else on the host (cursor, agy) is not visible there and
+// therefore contributes no PATH entry.
+func onDemandSandboxBinDir(provider string) string {
+	provider = strings.TrimSpace(provider)
+	root := strings.TrimSpace(RuntimeCLIDir())
+	if provider == "" || root == "" {
+		return ""
+	}
+	path, ok := OnDemandCLIPath(provider)
+	if !ok {
+		return ""
+	}
+	dir := filepath.Dir(path)
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return dir
 }
 
 func dropShellLoginFlag(argv []string) []string {

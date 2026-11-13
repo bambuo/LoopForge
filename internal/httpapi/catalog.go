@@ -308,7 +308,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			}
 			builtIn, ok := repo.BuiltInExecutor(v.ExecutorID)
 			if !ok {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + strings.TrimSpace(v.ExecutorID)})
 				return
 			}
 			if err := domain.ValidateAgentEffort(v.Effort, builtIn.Kind); err != nil {
@@ -1220,7 +1220,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		}
 		builtIn, ok := repo.BuiltInExecutor(agent.ExecutorID)
 		if !ok {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "CLI 仅支持 codebuddy、codex 或 claude"})
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + strings.TrimSpace(agent.ExecutorID)})
 			return
 		}
 		if err := domain.ValidateAgentEffort(agent.Effort, builtIn.Kind); err != nil {
@@ -1267,6 +1267,8 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			Name      string `json:"name"`
 			Owner     string `json:"owner"`
 			ProjectID string `json:"projectId"`
+			// ExecutorID replaces the template's CodeBuddy roles in the copy.
+			ExecutorID string `json:"executorId"`
 		}
 		if !decode(c, &req) {
 			return
@@ -1274,6 +1276,13 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if req.ID == "" || req.Name == "" {
 			c.JSON(400, map[string]string{"error": "id and name are required"})
 			return
+		}
+		executorID := strings.TrimSpace(req.ExecutorID)
+		if executorID != "" {
+			if _, ok := repo.BuiltInExecutor(executorID); !ok {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + executorID})
+				return
+			}
 		}
 		// A generic template id is reserved: no clone, whether its source is a
 		// regular SOP or the template itself, may occupy it, otherwise the
@@ -1290,7 +1299,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			return
 		}
 		if v.Generic {
-			stored, err := h.adoptGenericWorkflow(v, req.ID, req.Name, req.Owner, req.ProjectID)
+			stored, err := h.adoptGenericWorkflow(v, req.ID, req.Name, req.Owner, req.ProjectID, executorID)
 			if err != nil {
 				respond(c, err)
 				return

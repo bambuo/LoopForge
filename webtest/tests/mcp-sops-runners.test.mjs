@@ -84,6 +84,46 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
   assert.equal(app.evaluate(`state.data.workflows[0].generic`), false);
 });
 
+test('复制内置 SOP 时可把 CodeBuddy 角色切换为 Qoder', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const generic = {
+    id: 'generic-delivery', name: '通用交付', description: 'standard', generic: true, version: 2,
+    nodes: [{ id: 'clarify', name: '需求定型', type: 'agent', agentId: 'role-clarify' }],
+    requirements: [],
+  };
+  app.router.post('/api/workflows/generic-delivery/clone', (call) => ({
+    ...generic, ...call.body, generic: false, tags: ['generic-source:generic-delivery'],
+  }));
+  app.evaluate(`
+    state.currentUser={id:1,loginName:'owner',isPlatformAdmin:false};
+    state.data.users=[{id:1,loginName:'owner',codeBuddyApiKeyConfigured:false,agentCliCredentials:{qoder:{apiKeyConfigured:true}}}];
+    state.data.projects=[{id:'project-1',name:'Project'}];state.projectFilter='project-1';
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy',kind:'codebuddy'},{id:'qoder',name:'Qoder',kind:'qoder'}];
+    state.data.agents=[{id:'role-clarify',executorId:'codebuddy'}];
+    state.data.sandboxes=[];state.data.capabilities={docker:true};
+    state.data.workflows=[${JSON.stringify(generic)}];
+    state.sopScope='generic';
+    openGenericTemplateModal('generic-delivery');
+  `);
+  let rows = app.document.querySelector('#genericTemplateRequirements').textContent;
+  assert.match(rows, /CodeBuddy API Key.*未配置/s);
+  const select = app.document.querySelector('#genericTemplateExecutor');
+  assert.equal(select.value, 'codebuddy');
+  assert.match(select.textContent, /Qoder/);
+  select.value = 'qoder';
+  select.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  rows = app.document.querySelector('#genericTemplateRequirements').textContent;
+  assert.match(rows, /Qoder API Key.*已配置/s);
+  assert.doesNotMatch(rows, /CodeBuddy API Key/);
+  assert.match(app.document.querySelector('#genericTemplateExecutorHint').textContent, /Qoder/);
+  await app.evaluate(`adoptGenericTemplate()`);
+  await settle(8);
+  const clone = app.router.calls.find(c => c.path === '/api/workflows/generic-delivery/clone');
+  assert.equal(clone.body.executorId, 'qoder');
+  assert.equal(clone.body.projectId, 'project-1');
+});
+
 test('runner cards expose runtime controls and persist limits, defaults, and auth mode', async (t) => {
   const app = await loadApp();
   t.after(app.close);

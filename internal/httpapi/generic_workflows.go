@@ -13,7 +13,7 @@ import (
 // workflow becomes an editable draft and every role it references is cloned
 // into the same project with remapped ids, so the copy is immediately runnable
 // instead of failing on "agent not found".
-func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinition, id, name, owner, projectID string) (domain.WorkflowDefinition, error) {
+func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinition, id, name, owner, projectID, executorID string) (domain.WorkflowDefinition, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
 		return domain.WorkflowDefinition{}, errors.New("通用模板必须复制到具体项目后才能使用")
@@ -29,7 +29,7 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 	if sandboxID == "" {
 		return domain.WorkflowDefinition{}, errors.New("当前项目没有可用沙箱，请先在「沙箱管理」创建或共享一个沙箱")
 	}
-	agents, err := h.cloneGenericTemplateAgents(template.ID, projectID)
+	agents, err := h.cloneGenericTemplateAgents(template.ID, projectID, executorID)
 	if err != nil {
 		return domain.WorkflowDefinition{}, err
 	}
@@ -73,8 +73,10 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 // cloneGenericTemplateAgents copies the template roles into the project and
 // returns the source-id -> project-id mapping used to rewrite node bindings.
 // A role that already exists in the project is reused, so adopting the
-// template twice never overwrites local edits.
-func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID string) (map[string]string, error) {
+// template twice never overwrites local edits. When executorID is set, roles
+// that still run on CodeBuddy (including reused clones) move to that executor;
+// roles deliberately set to another executor are left alone.
+func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID, executorID string) (map[string]string, error) {
 	template, ok := h.repo.GenericTemplateByWorkflow(workflowID)
 	if !ok {
 		return nil, fmt.Errorf("generic template %q not found", workflowID)
@@ -94,6 +96,11 @@ func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID strin
 	for _, source := range template.Agents {
 		if existing, found := h.repo.Agent(source.ID); found && existing.ProjectID == projectID {
 			h.upgradeGenericTemplateAgent(&existing, source, projectID, now)
+			if genericTemplateExecutorReplacement(&existing, executorID, now) {
+				if err := h.repo.PutAgent(existing); err != nil {
+					return nil, err
+				}
+			}
 			remap[source.ID] = existing.ID
 			continue
 		}
@@ -102,6 +109,11 @@ func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID strin
 		// so re-adopting the template never duplicates the roles.
 		if existing, found := h.repo.Agent(source.ID + "-" + projectID); found && existing.ProjectID == projectID {
 			h.upgradeGenericTemplateAgent(&existing, source, projectID, now)
+			if genericTemplateExecutorReplacement(&existing, executorID, now) {
+				if err := h.repo.PutAgent(existing); err != nil {
+					return nil, err
+				}
+			}
 			remap[source.ID] = existing.ID
 			continue
 		}
@@ -111,6 +123,7 @@ func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID strin
 		agent.Shared = false
 		agent.Version = 1
 		agent.UpdatedAt = now
+		genericTemplateExecutorReplacement(&agent, executorID, now)
 		agent.MCPServers = h.resolveGenericTemplateMCP(agent.MCPServers, projectID)
 		agent.Rules = remapAssetIDs(agent.Rules, ruleRemap)
 		agent.Skills = remapAssetIDs(agent.Skills, skillRemap)
@@ -120,6 +133,25 @@ func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID strin
 		remap[source.ID] = agent.ID
 	}
 	return remap, nil
+}
+
+// genericTemplateExecutorReplacement 把仍用 CodeBuddy 的角色改为复制时选定的执行器。
+// 已显式使用其他执行器的角色保持不变，避免覆盖模板外的本地选择。
+func genericTemplateExecutorReplacement(agent *domain.AgentDefinition, executorID string, now time.Time) bool {
+	executorID = strings.TrimSpace(executorID)
+	if executorID == "" || executorID == "codebuddy" {
+		return false
+	}
+	current := strings.TrimSpace(agent.ExecutorID)
+	if current != "" && current != "codebuddy" {
+		return false
+	}
+	agent.ExecutorID = executorID
+	// A CodeBuddy model or effort level is not portable to another CLI.
+	agent.Model = ""
+	agent.Effort = ""
+	agent.UpdatedAt = now
+	return true
 }
 
 // upgradeGenericTemplateAgent refreshes an existing clone on re-adoption. The
