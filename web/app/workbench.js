@@ -105,7 +105,10 @@ const CREDENTIAL_KINDS=[
   agentCliCredentialKind('zcode',{name:'ZCode',logo:'glm',baseUrl:'https://open.bigmodel.cn/api/anthropic',
     note:'未填写 Base URL 时连接智谱 BigModel 的 Anthropic 兼容服务（Messages）。',protocols:[['messages','Messages（Anthropic）'],['chat','Chat Completions'],['responses','Responses']]}),
   agentCliCredentialKind('qoder',{name:'Qoder',logo:'qoder',monochrome:true,catalog:true,
-    note:'Qoder 连接官方服务，使用其自带模型；可在模型目录里改选，也可在角色里指定模型 ID。'}),
+    note:'Qoder 连接官方服务，使用其自带模型；可在模型目录里改选，也可在角色里指定模型 ID。',
+    placeholder:'请输入 Qoder 个人访问令牌（PAT）',
+    hint:'PAT 在 Qoder 账号设置页创建，国际版与国内版 CLI 都使用它。',
+    guide:[['在 Qoder 账号设置页创建 Personal Access Token','https://qoder.com/account/integrations','前往 Qoder 创建 PAT'],['复制 PAT 粘贴到下方；国际版与国内版 CLI 都使用它'],['保存后可在模型目录里挑选 AI 对话的模型，也可在角色里指定模型 ID']]}),
 ];
 function agentCliCredentialKind(cli,o){
   const field=`agentCli.${cli}.`,configurable=!!o.protocols,catalog=configurable||!!o.catalog;
@@ -113,7 +116,8 @@ function agentCliCredentialKind(cli,o){
     use:`AI 对话的 ${o.name} 模型与以 ${o.name} 运行的 SOP 节点`,
     description:`AI 对话切换到 ${o.name} 后可选用它的模型，SOP 在执行机器上以 ${o.name} 运行的节点也使用它。${o.note||''}`,
     guide:o.guide||[['在模型服务商控制台创建 API Key'],['记下服务地址和它提供的接口协议'],['粘贴 Key，按需填写 Base URL 并选择协议；保存后可在模型目录里挑选 AI 对话的模型']],
-    placeholder:`请输入 ${o.name} API Key`,
+    placeholder:o.placeholder||`请输入 ${o.name} API Key`,
+    hint:o.hint||'',
     ...(configurable?{
       extra:{name:field+'baseUrl',label:'Base URL',placeholder:o.baseUrl,url:true,clearWithKey:true,required:o.required,note:o.extraNote||(o.required?'必填':'')},
       protocol:{name:field+'protocol',options:o.protocols},
