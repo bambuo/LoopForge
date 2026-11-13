@@ -391,7 +391,7 @@ function credentialCatalogProbeHTML(catalog,kind){
   }).join('');
   const protocol=catalog.closest('.credential-editor-form')?.querySelector('select[name="protocol"]')?.value;
   const hasBaseURL=!!catalog.closest('.credential-editor-form')?.querySelector('input[name="extra"]');
-  const source=probe.source==='builtin'?'以下是内置模型':(hasBaseURL?`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`:'以下是 CLI 报告的模型清单');
+  const source=probe.source==='builtin'?'以下是内置模型':(hasBaseURL?`来自 Base URL 的 ${escapeHTML(credentialModelsEndpoint(kind,protocol))}`:(probe.source==='official'?'来自官方服务的模型清单':'以下是 CLI 报告的模型清单'));
   return `<div class="credential-catalog-probe-top"><span class="credential-input is-plain is-search">${credentialGlyph('search',14)}<input data-catalog-search placeholder="搜索模型" aria-label="搜索模型" autocomplete="off" spellcheck="false"></span><span class="credential-catalog-picked" data-catalog-picked></span><button type="button" class="credential-btn link credential-ink" data-catalog-act="toggle-all">全选</button></div>
     <div class="credential-catalog-probe-list" role="group" aria-label="可用模型">${items}</div>
     <div class="credential-catalog-probe-foot"><small>${source} · 勾选的模型会加入目录，取消勾选会移出</small><div><button type="button" class="credential-btn ghost credential-ink" data-catalog-act="probe-close">取消</button><button type="button" class="credential-btn primary credential-ink" data-catalog-act="probe-apply">更新列表</button></div></div>`;
