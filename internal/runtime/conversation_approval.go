@@ -179,6 +179,9 @@ try:
             request=urllib.request.Request(url,json.dumps(payload).encode(),{"Content-Type":"application/json"})
             with urllib.request.urlopen(request,timeout=min(20,remaining)) as response: rpc=json.load(response)
         except urllib.error.HTTPError as error:
+            if error.code in (401,403):
+                reason="审批会话已失效（平台可能刚重启或更新），请重新发送消息再试"
+                break
             if error.code not in (408,429,502,503,504): break
             wait()
             continue
@@ -224,9 +227,10 @@ async function approve(name,input,signal) {
     try {
       const timeout=AbortSignal.timeout(Math.min(20000,remaining));
       const response=await fetch(process.env.AGENTFLOW_NATIVE_APPROVAL_URL,{method:"POST",headers:{"content-type":"application/json"},body:payload,signal:signal?AbortSignal.any([signal,timeout]):timeout});
-      if(!response.ok) {
-        if(![408,429,502,503,504].includes(response.status)) throw Object.assign(new Error("本阶段已结束，审批已失效"),{terminal:true});
-      } else { rpc=await response.json(); }
+        if(!response.ok) {
+          if(response.status===401||response.status===403) throw Object.assign(new Error("审批会话已失效（平台可能刚重启或更新），请重新发送消息再试"),{terminal:true});
+          if(![408,429,502,503,504].includes(response.status)) throw Object.assign(new Error("本阶段已结束，审批已失效"),{terminal:true});
+        } else { rpc=await response.json(); }
     } catch(error) {
       if(error.terminal) throw error;
       if(signal?.aborted) throw new Error("本轮已停止");
