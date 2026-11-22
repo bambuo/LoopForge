@@ -844,9 +844,9 @@ const GIT_ADD_OPTIONS=[
   {id:'other',name:'其他 Git',icon:'globe'},
   {id:'gitSshKey',name:'Git SSH',icon:'key'},
 ];
-function credentialOptionHTML({id,name,logo,monochrome,icon},selected){
+function credentialOptionHTML({id,name,logo,monochrome,icon,danger},selected){
   const file=logo&&(logo.endsWith('.png')?logo:logo+'.svg');
-  return `<option value="${escapeHTML(id)}"${id===selected?' selected':''}${file?` data-brand="${escapeHTML(file)}"`:''}${monochrome?' data-brand-monochrome':''}${icon?` data-option-icon="${escapeHTML(icon)}"`:''}>${escapeHTML(name)}</option>`;
+  return `<option value="${escapeHTML(id)}"${id===selected?' selected':''}${file?` data-brand="${escapeHTML(file)}"`:''}${monochrome?' data-brand-monochrome':''}${icon?` data-option-icon="${escapeHTML(icon)}"`:''}${danger?' data-option-danger="1"':''}>${escapeHTML(name)}</option>`;
 }
 function credentialAddMenu(group,user){
   const git=group.id==='platform';
@@ -854,9 +854,9 @@ function credentialAddMenu(group,user){
   const options=git?GIT_ADD_OPTIONS:CREDENTIAL_KINDS.filter(kind=>kind.group==='model'&&!credentialConfigured(kind,user))
     .map(kind=>{
       const install=credentialInstallInfo(kind),installState=install?.status||'';
-      // 未安装的 CLI 在菜单里就地标出，选进去后向导里还有安装入口。
-      const suffix=installState==='installing'?'（安装中）':installState&&installState!=='installed'?'（服务器未安装）':'';
-      return {id:kind.key,name:kind.name+suffix,logo:kind.logo,monochrome:kind.monochrome};
+      // 未安装的 CLI 名字标红；菜单宽度有限，不写长后缀。
+      const danger=!!installState&&installState!=='installed';
+      return {id:kind.key,name:kind.name+(installState==='installing'?'（安装中）':''),logo:kind.logo,monochrome:kind.monochrome,danger};
     });
   if(!options.length)return '';
   return `<div class="credential-add-row">

@@ -2328,6 +2328,7 @@ body:has(#settingsView.active) #toastContainer{top:auto;bottom:84px}
 .hui-select-panel:is(.credential-add-panel,.credential-default-panel){min-width:0;padding:5px}
 .credential-default-panel .hui-select-options{max-height:286px}
 .credential-add-panel .hui-select-option{height:38px;padding-inline:8px}
+.credential-add-panel .hui-select-option.is-danger .hui-select-option-label{color:var(--red)}
 .credential-add-panel .hui-select-option-brand{box-sizing:border-box;width:24px;height:24px;margin-right:9px;padding:4px;border-radius:6px;background:var(--hui-soft);vertical-align:middle}
 .credential-add-panel .hui-select-option-brand.is-glyph{color:var(--hui-secondary)}
 .credential-add-panel .hui-select-option-meta:empty{display:none}
