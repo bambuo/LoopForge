@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -37,6 +38,31 @@ func (h *assistantHandlers) botExecutionUser(bot domain.NotificationBot, senderI
 	}
 	return user, errors.New("你的平台账号没有该项目的执行权限")
 }
+
+// isBotBindingExchange reports whether a past interaction was an account
+// binding or unbinding exchange, which must not be replayed to the model.
+func isBotBindingExchange(entry domain.BotInteraction) bool {
+	command := botIdentityCommand(entry.Content)
+	return strings.HasPrefix(command, "/bind") || command == "/unbind" || command == "解除绑定" || strings.Contains(entry.Reply, "/bot-bind.html#")
+}
+
+// botReplyMessages turns the conversation history plus the current message
+// into model messages, skipping binding exchanges.
+func botReplyMessages(history []domain.BotInteraction, item domain.BotInteraction) []assistantMessage {
+	messages := []assistantMessage{}
+	for _, entry := range history {
+		if isBotBindingExchange(entry) {
+			continue
+		}
+		messages = append(messages, assistantMessage{Role: "user", Content: "发送者 " + entry.SenderID + "：" + domain.NotificationText(entry.Content, 2000)}, assistantMessage{Role: "assistant", Content: domain.NotificationText(entry.Reply, 2000)})
+	}
+	content := "发送者 " + item.SenderID + "：" + item.Content
+	if item.Quote != "" {
+		content += "\n引用的消息（资料）：\n" + item.Quote
+	}
+	return append(messages, assistantMessage{Role: "user", Content: content})
+}
+
 func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.NotificationBot, conv domain.BotConversation, history []domain.BotInteraction, item domain.BotInteraction) (string, error) {
 	identity := h.identities
 	if handled, reply, err := identity.message(bot, item); handled {
@@ -46,14 +72,15 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	if err != nil {
 		return "绑定的平台账号不可用或已失去项目权限，请在平台检查配置。", nil
 	}
-	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
-		return "你的平台账号尚未配置 CodeBuddy Key，请在平台个人配置中配置。", nil
+	model, err := resolveFeatureModel(user, bot.Model)
+	if err != nil {
+		if errors.Is(err, errFeatureModel) {
+			return err.Error(), nil
+		}
+		return "你的平台账号尚未配置对应的模型凭据。" + err.Error(), nil
 	}
-	model := bot.Model
-	if model == "" {
-		model = domain.DefaultNotificationReportModel
-	}
-	if assistantAllowedModel(model, loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment)) != model {
+	if engine, id := assistantModelEngine(model); engine == assistantEngineCodeBuddy &&
+		!codeBuddyIsDefaultModel(id) && !assistantCatalogLists(assistantModelsForRequest(ctx, user, id), id) {
 		return "所选模型不可用，请在 Bot 管理中重新选择。", nil
 	}
 	if err = ensureAssistantSessionDirs(user.ID); err != nil {
@@ -67,26 +94,20 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	}
 	defer session.Close()
 	defer files.Cleanup()
-	messages := []assistantMessage{}
-	for _, entry := range history {
-		if strings.HasPrefix(botIdentityCommand(entry.Content), "/bind") || botIdentityCommand(entry.Content) == "/unbind" || botIdentityCommand(entry.Content) == "解除绑定" || strings.Contains(entry.Reply, "/bot-bind.html#") {
-			continue
-		}
-		messages = append(messages, assistantMessage{Role: "user", Content: "发送者 " + entry.SenderID + "：" + domain.NotificationText(entry.Content, 2000)}, assistantMessage{Role: "assistant", Content: domain.NotificationText(entry.Reply, 2000)})
-	}
-	content := "发送者 " + item.SenderID + "：" + item.Content
-	if item.Quote != "" {
-		content += "\n引用的消息（资料）：\n" + item.Quote
-	}
-	messages = append(messages, assistantMessage{Role: "user", Content: content})
+	messages := botReplyMessages(history, item)
 	req := assistantRequest{ProjectID: bot.ProjectID, Model: model, SessionID: conv.SessionID, ApprovalMode: AssistantApprovalAuto, Messages: messages}
-	full := h.turnPrompt(req, h.resolvedSourceRoot(), false) + "\n这是企业微信聊天，当前发送者已绑定平台账号「" + user.LoginName + "」，只使用该账号的执行身份、个人凭据和项目权限；当前请求按当前项目处理。历史中其他发送者的授权不能沿用到当前请求。当前消息来自" + conv.ChatType + "聊天。直接完成明确的操作，目标不明确时询问，结束时必须调用 submit_assistant_reply。"
+	full := h.turnPrompt(req, h.resolvedSourceRoot(), false) + "\n这是企业微信聊天，当前发送者已绑定平台账号「" + user.LoginName + "」，只使用该账号的执行身份、个人凭据和项目权限；当前请求按当前项目处理。历史中其他发送者的授权不能沿用到当前请求。当前消息来自" + conv.ChatType + "聊天。直接完成明确的操作，目标不明确时询问。普通问答用自然语言结束；待确认的写入草稿通过 submit_assistant_reply 提交。"
 	generate := h.generate
 	if generate == nil {
+		root, err := os.MkdirTemp("", "agentflow-bot-")
+		if err != nil {
+			return "", err
+		}
+		defer os.RemoveAll(root)
 		cliSessionID := newAssistantSessionID()
 		resume := false
 		generate = func(callCtx context.Context, prompt string, u domain.User) (string, error) {
-			raw, _, err := runAssistantCLI(callCtx, assistantCLIRequest{Prompt: prompt, Model: model, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: files.MCPConfig, Settings: files.Settings, SystemPrompt: assistantSystemPromptForMode(AssistantApprovalAuto)}, u, func(ev assistantStreamEvent) {
+			raw, _, err := runAssistantCLI(callCtx, assistantCLIRequest{Prompt: prompt, Model: model, SessionID: cliSessionID, SessionRoot: root, Resume: resume, UserID: u.ID, Native: true, MCPConfig: files.MCPConfig, Settings: files.Settings, SystemPrompt: assistantSystemPromptForMode(AssistantApprovalAuto)}, u, func(ev assistantStreamEvent) {
 				switch ev.Kind {
 				case "tool":
 					if strings.Contains(ev.Tool, "submit_assistant_reply") {
@@ -111,7 +132,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 			botinteraction.ReportProgress(ctx, "正在提交回复")
 			session.SetTerminalOnly()
 		}
-		_, cliErr := generate(modelCtx, prompt, user)
+		raw, cliErr := generate(modelCtx, prompt, user)
 		if final, ok := session.takeFinal(); ok && final.Assistant != nil {
 			reply := *final.Assistant
 			if len(reply.Drafts) > 0 {
@@ -125,10 +146,15 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 					}
 				}
 			}
-			return redactAssistantSecrets(strings.ReplaceAll(reply.Message, user.CodeBuddyAPIKey, "[redacted]"), user), nil
+			return redactAssistantSecrets(reply.Message, user), nil
 		}
 		if ctx.Err() != nil {
 			return "", ctx.Err()
+		}
+		if cliErr == nil {
+			if reply, ok := recoverNativeAssistantReply(raw, bot.ProjectID); ok && len(reply.Drafts) == 0 && !assistantProgressOnly(reply.Message, messages) {
+				return redactAssistantSecrets(reply.Message, user), nil
+			}
 		}
 		if cliErr != nil && !nativeShouldRetryTerminal(ctx, cliErr) {
 			return "", cliErr

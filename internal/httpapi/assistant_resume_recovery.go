@@ -8,6 +8,23 @@ import (
 	"agentflow/internal/runtime"
 )
 
+// freshPhasePrompt rebuilds the full transcript for a fresh native session.
+// req.workspaceMode follows the current phase, so a fallback after a handoff
+// describes the new mode rather than the one the turn started in.
+func (h *assistantHandlers) freshPhasePrompt(req assistantRequest, sourceRoot string, switches int) string {
+	prompt := h.turnPrompt(req, sourceRoot, false)
+	if switches > 0 {
+		// The fresh session has no record of the switch it continues from.
+		prompt += "\n本轮之前的阶段已执行过操作。先核对工作区实际文件与状态，避免重复执行。"
+		if req.workspaceMode {
+			prompt += "本轮已经进入工作区模式，你现在就在工作区里：直接用原生文件与命令工具继续，不要再调用 workbench_workspace_open 或 workbench_platform_mode，除非任务确实需要换运行环境或回到平台管理。"
+		} else {
+			prompt += "本轮已经切回平台模式：直接用平台工具继续，不要为重做上一阶段的操作再切换模式。"
+		}
+	}
+	return prompt
+}
+
 // assistantResumeRejectedRe matches providers refusing a replayed native
 // journal: a 400/422, or the wording CodeBuddy and OpenAI-compatible
 // gateways use for a transcript whose structure they reject.
@@ -18,7 +35,7 @@ var assistantResumeRejectedRe = regexp.MustCompile(`(?i)(must end with a user me
 // with none of these executed nothing and can safely start over.
 func assistantPhaseProgress(ev assistantStreamEvent) bool {
 	switch ev.Kind {
-	case "tool", "toolDone", "toolEnd", "text", "answer", "agentText", "draftStart", "draftDelta", "thinking", "thinkingStart":
+	case "tool", "toolDone", "toolEnd", "text", "answer", "agentText", "agentModel", "draftStart", "draftDelta", "thinking", "thinkingStart":
 		return true
 	}
 	return false

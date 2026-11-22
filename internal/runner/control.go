@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 
 	"github.com/gorilla/websocket"
 )
@@ -29,15 +30,17 @@ var controlReadTimeout = 75 * time.Second
 var controlWriteTimeout = 10 * time.Second
 
 type controlMessage struct {
-	ToolRequest       *domain.RunnerToolRequest       `json:"toolRequest,omitempty"`
-	ToolResponse      *domain.RunnerToolResponse      `json:"toolResponse,omitempty"`
-	Type              string                          `json:"type"`
-	TaskID            string                          `json:"taskId,omitempty"`
-	DesiredState      string                          `json:"desiredState,omitempty"`
-	ActiveTaskIDs     []string                        `json:"activeTaskIds,omitempty"`
-	RequestID         string                          `json:"requestId,omitempty"`
-	WorkspaceRequest  *domain.RunnerWorkspaceRequest  `json:"workspaceRequest,omitempty"`
-	WorkspaceResponse *domain.RunnerWorkspaceResponse `json:"workspaceResponse,omitempty"`
+	ToolRequest        *domain.RunnerToolRequest           `json:"toolRequest,omitempty"`
+	ToolResponse       *domain.RunnerToolResponse          `json:"toolResponse,omitempty"`
+	Type               string                              `json:"type"`
+	TaskID             string                              `json:"taskId,omitempty"`
+	DesiredState       string                              `json:"desiredState,omitempty"`
+	ActiveTaskIDs      []string                            `json:"activeTaskIds,omitempty"`
+	RequestID          string                              `json:"requestId,omitempty"`
+	WorkspaceRequest   *domain.RunnerWorkspaceRequest      `json:"workspaceRequest,omitempty"`
+	WorkspaceResponse  *domain.RunnerWorkspaceResponse     `json:"workspaceResponse,omitempty"`
+	ObserveImageBuild  bool                                `json:"observeImageBuild,omitempty"`
+	ImageBuildProgress *domain.WorkspaceImageBuildProgress `json:"imageBuildProgress,omitempty"`
 }
 
 // controlLoop maintains one outbound WebSocket for immediate server-to-runner
@@ -81,44 +84,28 @@ func (d *Daemon) controlLoop(ctx context.Context) {
 	}
 }
 
-func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
-	ctx, cancel := context.WithCancel(ctx)
+func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) error {
+	ctx, cancel := context.WithCancel(daemonCtx)
 	var requests sync.WaitGroup
-	var checkpointMu sync.Mutex
-	checkpointCancels := map[string]context.CancelFunc{}
+	var workspaceCancelMu sync.Mutex
+	workspaceCancels := map[string]context.CancelFunc{}
 	var writeMu sync.Mutex
 	writeMessage := func(message controlMessage) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
 		_ = conn.SetWriteDeadline(time.Now().Add(controlWriteTimeout))
-		return conn.WriteJSON(message)
+		err := conn.WriteJSON(message)
+		if err != nil {
+			cancel()
+		}
+		return err
 	}
 	d.conversationMu.Lock()
 	if d.conversationReplies == nil {
 		d.conversationReplies = map[string]chan domain.RunnerToolResponse{}
 	}
 	d.conversationForward = func(callCtx context.Context, token string, body json.RawMessage) (json.RawMessage, error) {
-		id := fmt.Sprintf("tool-%d", time.Now().UnixNano())
-		reply := make(chan domain.RunnerToolResponse, 1)
-		d.conversationMu.Lock()
-		d.conversationReplies[id] = reply
-		d.conversationMu.Unlock()
-		defer func() { d.conversationMu.Lock(); delete(d.conversationReplies, id); d.conversationMu.Unlock() }()
-		err := writeMessage(controlMessage{Type: "agent_tool.request", RequestID: id, ToolRequest: &domain.RunnerToolRequest{Token: token, Body: body}})
-		if err != nil {
-			return nil, err
-		}
-		select {
-		case response := <-reply:
-			if response.Error != "" {
-				return nil, errors.New(response.Error)
-			}
-			return response.Body, nil
-		case <-callCtx.Done():
-			return nil, callCtx.Err()
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+		return d.forwardConversationTool(ctx, callCtx, writeMessage, token, body)
 	}
 	d.conversationMu.Unlock()
 	slots := make(chan struct{}, 8)
@@ -151,21 +138,13 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
 		if message.Type == "agent_tool.response" && message.ToolResponse != nil {
-			d.conversationMu.Lock()
-			reply := d.conversationReplies[message.RequestID]
-			d.conversationMu.Unlock()
-			if reply != nil {
-				select {
-				case reply <- *message.ToolResponse:
-				default:
-				}
-			}
+			d.deliverConversationReply(message.RequestID, *message.ToolResponse)
 			continue
 		}
 		if message.Type == "workspace.cancel" {
-			checkpointMu.Lock()
-			stop := checkpointCancels[message.RequestID]
-			checkpointMu.Unlock()
+			workspaceCancelMu.Lock()
+			stop := workspaceCancels[message.RequestID]
+			workspaceCancelMu.Unlock()
 			if stop != nil {
 				stop()
 			}
@@ -188,11 +167,11 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 			}
 			requestCtx := ctx
 			stopRequest := func() {}
-			if domain.IsWorkspaceCheckpointTransferOperation(message.WorkspaceRequest.Operation) || message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationCheckpoint {
+			if domain.IsCancelableRunnerWorkspaceOperation(message.WorkspaceRequest.Operation) {
 				requestCtx, stopRequest = context.WithCancel(ctx)
-				checkpointMu.Lock()
-				checkpointCancels[message.RequestID] = stopRequest
-				checkpointMu.Unlock()
+				workspaceCancelMu.Lock()
+				workspaceCancels[message.RequestID] = stopRequest
+				workspaceCancelMu.Unlock()
 			}
 			requests.Add(1)
 			go func(message controlMessage, requestCtx context.Context, stopRequest context.CancelFunc) {
@@ -200,12 +179,28 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 				defer func() { <-slots }()
 				defer func() {
 					stopRequest()
-					checkpointMu.Lock()
-					delete(checkpointCancels, message.RequestID)
-					checkpointMu.Unlock()
+					workspaceCancelMu.Lock()
+					delete(workspaceCancels, message.RequestID)
+					workspaceCancelMu.Unlock()
 				}()
-				response := d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
+				var response domain.RunnerWorkspaceResponse
+				var startUpdate func()
+				if message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationMaintenance {
+					response, startUpdate = d.maintenanceResponse(requestCtx, daemonCtx, message.WorkspaceRequest.Maintenance)
+				} else {
+					if message.ObserveImageBuild {
+						requestCtx = runtime.WithDockerBuildProgress(requestCtx, func(progress domain.WorkspaceImageBuildProgress) {
+							if requestCtx.Err() == nil {
+								_ = writeMessage(controlMessage{Type: "workspace.image_progress", RequestID: message.RequestID, ImageBuildProgress: &progress})
+							}
+						})
+					}
+					response = d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
+				}
 				err := writeMessage(controlMessage{Type: "workspace.response", RequestID: message.RequestID, WorkspaceResponse: &response})
+				if startUpdate != nil {
+					startUpdate()
+				}
 				if err != nil {
 					_ = conn.Close()
 				}
@@ -273,4 +268,53 @@ func (d *Daemon) activeTaskIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// forwardConversationTool sends one agent_tool.request over the control
+// connection and waits for the matching agent_tool.response. It returns early
+// when either the caller (callCtx) or the control connection (connCtx) ends.
+// readControls must have initialised d.conversationReplies.
+func (d *Daemon) forwardConversationTool(connCtx, callCtx context.Context, write func(controlMessage) error, token string, body json.RawMessage) (json.RawMessage, error) {
+	if err := callCtx.Err(); err != nil {
+		return nil, err
+	}
+	id := fmt.Sprintf("tool-%d", d.conversationToolSeq.Add(1))
+	reply := make(chan domain.RunnerToolResponse, 1)
+	d.conversationMu.Lock()
+	d.conversationReplies[id] = reply
+	d.conversationMu.Unlock()
+	defer func() { d.conversationMu.Lock(); delete(d.conversationReplies, id); d.conversationMu.Unlock() }()
+	err := write(controlMessage{Type: "agent_tool.request", RequestID: id, ToolRequest: &domain.RunnerToolRequest{Token: token, Body: body, SupportsCancel: true}})
+	if err != nil {
+		return nil, err
+	}
+	select {
+	case response := <-reply:
+		if response.Error != "" {
+			return nil, errors.New(response.Error)
+		}
+		return response.Body, nil
+	case <-callCtx.Done():
+		if connCtx.Err() == nil {
+			_ = write(controlMessage{Type: "agent_tool.cancel", RequestID: id})
+		}
+		return nil, callCtx.Err()
+	case <-connCtx.Done():
+		return nil, connCtx.Err()
+	}
+}
+
+// deliverConversationReply hands an agent_tool.response to the waiting
+// forwardConversationTool call. Replies for unknown or already-answered
+// request IDs are dropped without blocking the control read loop.
+func (d *Daemon) deliverConversationReply(requestID string, response domain.RunnerToolResponse) {
+	d.conversationMu.Lock()
+	reply := d.conversationReplies[requestID]
+	d.conversationMu.Unlock()
+	if reply != nil {
+		select {
+		case reply <- response:
+		default:
+		}
+	}
 }

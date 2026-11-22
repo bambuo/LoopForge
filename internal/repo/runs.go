@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -140,20 +141,14 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	}
 	q := r.DB
 	if filter.ProjectIDs != nil {
-		expr := "json_extract(execution_context, '$.projectId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("projectId")
 		q = q.Where(expr+" IN ? OR "+expr+" IS NULL OR "+expr+" = ''", filter.ProjectIDs)
 	}
 	if filter.WorkflowID != "" {
 		q = q.Where("workflow_id = ?", filter.WorkflowID)
 	}
 	if projectID := strings.TrimSpace(filter.ProjectID); projectID != "" {
-		expr := "json_extract(execution_context, '$.projectId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("projectId")
 		// Keep legacy rows with an empty project stamp; FilterRunsByProject
 		// still resolves those through the linked issue.
 		q = q.Where(expr+" = ? OR "+expr+" IS NULL OR "+expr+" = ''", projectID)
@@ -165,10 +160,7 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 		q = q.Where("created_at <= ? OR created_at IS NULL", filter.To)
 	}
 	if issueID != "" {
-		expr := "json_extract(execution_context, '$.issueId')"
-		if r.isMySQL() {
-			expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-		}
+		expr := r.sqlExecutionContextJSONText("issueId")
 		q = q.Where(expr+" = ?", issueID)
 	}
 	var rows []runRow
@@ -276,6 +268,16 @@ func (r *RunsRepo) RunStatuses() map[string]string {
 	return out
 }
 
+// ReadRunStatus reads a single run without loading its graph or event history.
+func (r *RunsRepo) ReadRunStatus(ctx context.Context, id string) (status string, found bool, err error) {
+	var row runRow
+	err = r.DB.WithContext(ctx).Select("status").Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false, nil
+	}
+	return row.Status, err == nil, err
+}
+
 // RunsWithActiveNodes reports runs that still have running or pending_input nodes.
 // Used by task reconciliation without hydrating full run views.
 func (r *RunsRepo) RunsWithActiveNodes() map[string]bool {
@@ -305,6 +307,29 @@ func (r *RunsRepo) Run(id string) (domain.Run, bool) {
 		return domain.Run{}, false
 	}
 	return run, true
+}
+
+// RunHeader reads identity and execution scope without loading the snapshot,
+// nodes, events or artifacts. A missing run is returned as an empty header.
+func (r *RunsRepo) RunHeader(id string) (domain.Run, error) {
+	var row runRow
+	err := r.DB.Select("id", "kind", "workflow_id", "execution_context").Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.Run{}, nil
+	}
+	return runFromRow(row), err
+}
+
+// RunWorkflowProjectID reads the frozen project association without loading
+// the workflow graph or execution data.
+func (r *RunsRepo) RunWorkflowProjectID(id string) (string, error) {
+	project := "JSON_EXTRACT(snapshot, '$.projectId')"
+	if r.isMySQL() {
+		project = "JSON_UNQUOTE(" + project + ")"
+	}
+	var row struct{ ProjectID string }
+	err := r.DB.Table("runs").Select(project+" AS project_id").Where("id = ?", id).Scan(&row).Error
+	return strings.TrimSpace(row.ProjectID), err
 }
 
 // RunState returns the durable aggregate needed by the execution engine.
@@ -446,10 +471,7 @@ func (r *RunsRepo) SupersededIssueRunIDs(issueID, keepRunID string) []string {
 	if issueID == "" {
 		return nil
 	}
-	expr := "json_extract(execution_context, '$.issueId')"
-	if r.isMySQL() {
-		expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-	}
+	expr := r.sqlExecutionContextJSONText("issueId")
 	var ids []string
 	q := r.DB.Model(&runRow{}).
 		Where(expr+" = ?", issueID).
@@ -756,10 +778,7 @@ func (r *RunsRepo) runTimingEvents(ids []string) (map[string][]domain.RunEvent, 
 // nodes, events or artifact content. Missing runs are absent from the map.
 func (r *RunsRepo) RunProjectIDs(ids []string) (map[string]string, error) {
 	out := make(map[string]string, len(ids))
-	project := "json_extract(execution_context, '$.projectId')"
-	if r.isMySQL() {
-		project = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.projectId'))"
-	}
+	project := r.sqlExecutionContextJSONText("projectId")
 	for start := 0; start < len(ids); start += 500 {
 		var rows []struct {
 			ID        string
@@ -1683,9 +1702,9 @@ func adapterSQLFilter(adapter string) sqlFilter {
 	case "hooks":
 		return sqlFilter{clause: " AND adapter IN (?, ?)", args: []any{observability.AdapterHooks, observability.AdapterLegacyHooks}}
 	case "otel":
-		return sqlFilter{clause: " AND adapter=?", args: []any{observability.AdapterOTEL}}
+		return sqlFilter{clause: " AND adapter IN (?, ?)", args: []any{observability.AdapterOTEL, observability.AdapterLegacyOTEL}}
 	case "live":
-		return sqlFilter{clause: " AND adapter NOT IN (?, ?, ?)", args: []any{observability.AdapterHooks, observability.AdapterLegacyHooks, observability.AdapterOTEL}}
+		return sqlFilter{clause: " AND adapter NOT IN (?, ?, ?, ?)", args: []any{observability.AdapterHooks, observability.AdapterLegacyHooks, observability.AdapterOTEL, observability.AdapterLegacyOTEL}}
 	default:
 		return sqlFilter{clause: " AND adapter=?", args: []any{strings.TrimSpace(adapter)}}
 	}

@@ -26,15 +26,15 @@ import (
 
 type cliModelProbeResult struct {
 	Models []domain.CLIModel `json:"models"`
-	// Source is "remote" for the Base URL's model list and for what a CLI
-	// reports about itself, "official" for the official endpoint's model
-	// list, and "builtin" for the executor catalog used when neither answers.
+	// Source identifies the configured gateway, official provider, Runner or built-in catalog.
 	Source string `json:"source,omitempty"`
 	Error  string `json:"error,omitempty"`
 }
 
-// probeCLIModels backs 「获取可用模型」 for the model catalog of a CLI other
-// than CodeBuddy. The form's unsaved API Key, Base URL and protocol win over the stored ones
+const assistantAnthropicAPIBase = "https://api.anthropic.com"
+
+// probeCLIModels backs 「获取可用模型」 for a personal model catalog.
+// The form's unsaved API Key, Base URL and protocol win over the stored ones
 // so a user can probe before saving; nothing is stored. Like
 // verifyGitToken it answers 200 with a structured result.
 func (h *usersHandlers) probeCLIModels(c *gin.Context) {
@@ -55,13 +55,14 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		// while "" means the official endpoint.
 		BaseURL *string `json:"baseUrl"`
 		// Protocol is the agent CLI's form value; null keeps the stored one.
-		Protocol *string `json:"protocol"`
+		Protocol    *string `json:"protocol"`
+		Environment *string `json:"environment"`
 	}
 	if !decode(c, &req) {
 		return
 	}
 	engine := strings.TrimSpace(req.Engine)
-	if engine == assistantEngineCodeBuddy || !slices.Contains(assistantCLIEngines(), engine) {
+	if engine != assistantEngineCodeBuddy && !slices.Contains(assistantCLIEngines(), engine) {
 		c.JSON(http.StatusBadRequest, cliModelProbeResult{Error: "不支持的 CLI：" + engine})
 		return
 	}
@@ -69,7 +70,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: errInvalidCLIBaseURL})
 		return
 	}
-	apiKey, baseURL, protocol := strings.TrimSpace(req.APIKey), "", ""
+	apiKey, baseURL, protocol, environment := strings.TrimSpace(req.APIKey), "", "", ""
 	if h.repo != nil {
 		if stored, found := h.repo.User(id); found {
 			storedKey, storedURL := assistantEngineCredential(stored, engine)
@@ -77,13 +78,48 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 				apiKey = storedKey
 			}
 			baseURL, protocol = storedURL, assistantEngineProtocol(stored, engine)
+			environment = stored.CodeBuddyInternetEnvironment
 		}
 	}
 	if req.BaseURL != nil {
 		baseURL = strings.TrimSpace(*req.BaseURL)
 	}
+	configuredBaseURL := baseURL
 	if req.Protocol != nil && runtime.IsAgentCLI(engine) {
 		protocol = runtime.AgentCLIProtocol(engine, *req.Protocol)
+	}
+	c.Header("Cache-Control", "private, no-store")
+	if engine == assistantEngineCodeBuddy && req.Environment != nil {
+		var ok bool
+		environment, ok = domain.NormalizeCodeBuddyInternetEnvironment(*req.Environment)
+		if !ok {
+			c.JSON(http.StatusBadRequest, cliModelProbeResult{Error: "请选择有效的 CodeBuddy 网络环境"})
+			return
+		}
+	}
+	if engine == assistantEngineCodeBuddy && baseURL == "" {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		defer cancel()
+		var models []domain.CLIModel
+		for _, id := range discoverCLIModels(ctx, environment, apiKey) {
+			if !codeBuddyIsDefaultModel(id) && assistantValidEngineModel(id) {
+				models = append(models, domain.CLIModel{ID: id})
+			}
+		}
+		if len(models) == 0 {
+			if _, err := resolveAssistantEngineBin(engine); errors.Is(err, errAssistantCLIMissing) {
+				c.JSON(http.StatusOK, cliModelProbeResult{Error: err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, cliModelProbeResult{Error: "CodeBuddy CLI 没有返回模型，请检查 CLI 和个人凭据"})
+			return
+		}
+		source := "official"
+		if apiKey == "" {
+			source = "builtin"
+		}
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, models, ""), Source: source})
+		return
 	}
 	if engine == runtime.AgentCLICursor {
 		h.probeCursorModels(c, apiKey)
@@ -93,33 +129,11 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		h.probeQoderModels(c, apiKey)
 		return
 	}
-	if engine == runtime.AgentCLIDeepSeek && baseURL == "" {
-		// DeepSeek Harness on the official endpoint: fetch the model list
-		// instead of quoting the built-in table.
-		h.probeDeepSeekModels(c, apiKey)
+	if baseURL == "" && apiKey == "" {
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(assistantEngineBuiltinModels(engine)), ""), Source: "builtin"})
 		return
 	}
-	if protocol == runtime.AgentCLIProtocolGemini {
-		baseURL = ""
-	}
-	if baseURL == "" {
-		// Official endpoint: engines with their own service fetch its
-		// published model list; the rest quote the built-in table.
-		if official, ok := assistantEngineOfficialEndpoints[engine]; ok {
-			base, anthropic := official.baseURL, official.anthropic
-			h.probeOfficialModels(c, engine, apiKey, func(ctx context.Context, key string) ([]assistantDiscoveredModel, error) {
-				return assistantEngineDiscover(ctx, anthropic, key, base)
-			})
-			return
-		}
-		if engine == runtime.AgentCLIAntigravity {
-			h.probeOfficialModels(c, engine, apiKey, assistantGeminiModels)
-			return
-		}
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(engine)), Source: "builtin"})
-		return
-	}
-	if engine == runtime.AgentCLIPi {
+	if engine == runtime.AgentCLIPi && baseURL != "" {
 		// Pi rides a user Base URL; the installed CLI's own provider data
 		// floors the endpoint's published list when it knows the service.
 		h.probePiModels(c, apiKey, baseURL, protocol)
@@ -131,7 +145,35 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	models, err := assistantEngineDiscover(ctx, assistantEngineAnthropicModels(engine, protocol), apiKey, baseURL)
+	source := "remote"
+	anthropic := assistantEngineAnthropicModels(engine, protocol)
+	if baseURL == "" {
+		source = "official"
+		switch engine {
+		case assistantEngineCodex:
+			baseURL = "https://api.openai.com/v1"
+		case assistantEngineClaude:
+			baseURL = assistantAnthropicAPIBase
+		case runtime.AgentCLIKimi:
+			baseURL, anthropic = "https://api.kimi.com/coding/v1", false
+		case runtime.AgentCLIDeepSeek:
+			baseURL, anthropic = "https://api.deepseek.com", false
+		case runtime.AgentCLIZCode:
+			baseURL, anthropic = "https://open.bigmodel.cn/api/coding/paas/v4", false
+		}
+	}
+	var models []assistantDiscoveredModel
+	if engine == runtime.AgentCLIAntigravity && protocol == runtime.AgentCLIProtocolGemini {
+		if baseURL == "" {
+			baseURL = "https://generativelanguage.googleapis.com"
+		}
+		models, err = discoverGeminiModels(ctx, apiKey, baseURL)
+	} else if baseURL != "" {
+		models, err = assistantEngineDiscover(ctx, anthropic, apiKey, baseURL)
+	} else {
+		c.JSON(http.StatusOK, cliModelProbeResult{Error: "请先在个人配置中填写模型服务的 Base URL"})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "获取模型列表失败：" + err.Error()})
 		return
@@ -140,7 +182,57 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "服务没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(models), Source: "remote"})
+	// The installed CLI's own provider catalog floors live results: DeepSeek
+	// Harness ships pi-ai provider data and Pi matches the Base URL origin
+	// against its bundled catalogs.
+	out := cliModelsOf(models)
+	switch engine {
+	case runtime.AgentCLIDeepSeek:
+		out = mergeCatalogModels(dshCatalogModels(), out)
+	case runtime.AgentCLIPi:
+		out = mergeCatalogModels(piCatalogModelsForBaseURL(configuredBaseURL), out)
+	}
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, out, configuredBaseURL), Source: source})
+}
+
+func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistantDiscoveredModel, error) {
+	baseURL = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1beta")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1beta/models?pageSize=1000", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-goog-api-key", key)
+	client := *http.DefaultClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Gemini 模型接口返回 HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		Models []struct {
+			Name        string   `json:"name"`
+			DisplayName string   `json:"displayName"`
+			Methods     []string `json:"supportedGenerationMethods"`
+		} `json:"models"`
+	}
+	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return nil, err
+	}
+	var models []assistantDiscoveredModel
+	for _, item := range payload.Models {
+		id := strings.TrimPrefix(item.Name, "models/")
+		if assistantValidEngineModel(id) && slices.Contains(item.Methods, "generateContent") {
+			models = append(models, assistantDiscoveredModel{ID: id, Name: item.DisplayName})
+			if len(models) == assistantDiscoveryMaxModels {
+				break
+			}
+		}
+	}
+	return models, nil
 }
 
 // probeCursorModels asks cursor-agent itself: Cursor has no Base URL, and
@@ -154,7 +246,7 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 	defer cancel()
 	models, err := cursorAgentModels(ctx, apiKey)
 	if errors.Is(err, errAssistantCLIMissing) {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLICursor)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLICursor, cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLICursor)), ""), Source: "builtin"})
 		return
 	}
 	if err != nil {
@@ -165,7 +257,7 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "Cursor CLI 没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "remote"})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLICursor, models, ""), Source: "official"})
 }
 
 var cursorModelLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) - (.+)$`)
@@ -174,14 +266,14 @@ var cursorModelLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) - (.+)$`
 // models behind a PAT depend on the account (official tiers plus BYOK rows).
 func (h *usersHandlers) probeQoderModels(c *gin.Context, apiKey string) {
 	if apiKey == "" {
-		c.JSON(http.StatusOK, cliModelProbeResult{Error: "请先填写 " + assistantEngineLabel(runtime.AgentCLIQoder) + " API Key"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLIQoder, cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIQoder)), ""), Source: "builtin"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 	models, err := qoderAgentModels(ctx, apiKey)
 	if errors.Is(err, errAssistantCLIMissing) {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIQoder)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLIQoder, cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIQoder)), ""), Source: "builtin"})
 		return
 	}
 	if err != nil {
@@ -191,10 +283,10 @@ func (h *usersHandlers) probeQoderModels(c *gin.Context, apiKey string) {
 	if len(models) == 0 {
 		// The CLI only lists the account's BYOK models; none means the
 		// official "auto" model is all the account offers.
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIQoder)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLIQoder, cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIQoder)), ""), Source: "builtin"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "remote"})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLIQoder, models, ""), Source: "remote"})
 }
 
 var qoderModelLine = regexp.MustCompile(`^(.+?)\s*\(([^()]+)\)$`)
@@ -268,50 +360,6 @@ func parseQoderModels(out string) []domain.CLIModel {
 		add(line, line)
 	}
 	return models
-}
-
-// deepSeekOfficialBaseURL is the endpoint DeepSeek Harness rides when no
-// Base URL is configured; its published model list feeds the probe.
-const deepSeekOfficialBaseURL = "https://api.deepseek.com"
-
-// probeDeepSeekModels answers 「获取可用模型」 for DeepSeek Harness on the
-// official endpoint. The installed CLI's own provider catalog is the
-// deterministic floor — what this dsh build can drive, key or no key — and
-// the official /models endpoint adds whatever the service currently lists,
-// so new releases show up before the CLI bundles them. When the official
-// endpoint doesn't answer, the catalog (or the built-in table) still stands
-// in. A Base URL probe never reaches here; it lists that endpoint instead.
-func (h *usersHandlers) probeDeepSeekModels(c *gin.Context, apiKey string) {
-	catalog := dshCatalogModels()
-	if apiKey == "" {
-		// Nothing to fetch the official list with; the CLI's catalog or the
-		// built-in table still answers.
-		if len(catalog) == 0 {
-			c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIDeepSeek)), Source: "builtin"})
-			return
-		}
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: catalog, Source: "remote"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-	official, err := assistantEngineDiscover(ctx, false, apiKey, deepSeekOfficialBaseURL)
-	if err != nil || len(official) == 0 {
-		if len(catalog) > 0 {
-			// The official endpoint didn't answer (bad key, offline,
-			// nothing published); the CLI's catalog is still a
-			// deterministic list.
-			c.JSON(http.StatusOK, cliModelProbeResult{Models: catalog, Source: "remote"})
-			return
-		}
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIDeepSeek)), Source: "builtin"})
-		return
-	}
-	models := cliModelsOf(official)
-	if len(catalog) > 0 {
-		models = mergeCatalogModels(catalog, models)
-	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "official"})
 }
 
 // dshCatalogModels reads the official provider catalog the installed DeepSeek
@@ -434,116 +482,6 @@ func mergeCatalogModels(floor, live []domain.CLIModel) []domain.CLIModel {
 	return out
 }
 
-// officialEndpoint is an engine's own model service and the wire shape its
-// model list speaks.
-type officialEndpoint struct {
-	baseURL   string
-	anthropic bool
-}
-
-// assistantEngineOfficialEndpoints lists the engines that ride a service of
-// their own when no Base URL is configured, with that service's endpoint.
-var assistantEngineOfficialEndpoints = map[string]officialEndpoint{
-	assistantEngineCodex:  {baseURL: "https://api.openai.com/v1"},
-	assistantEngineClaude: {baseURL: "https://api.anthropic.com", anthropic: true},
-	runtime.AgentCLIKimi:  {baseURL: "https://api.moonshot.cn/v1"},
-	runtime.AgentCLIZCode: {baseURL: "https://open.bigmodel.cn/api/anthropic", anthropic: true},
-}
-
-// probeOfficialModels answers 「获取可用模型」 for an engine on its official
-// endpoint: the service's published model list fetched with the user's key,
-// with the built-in table kept as the deterministic floor. A failed fetch
-// leaves the floor to answer on its own.
-func (h *usersHandlers) probeOfficialModels(c *gin.Context, engine, apiKey string, discover func(ctx context.Context, apiKey string) ([]assistantDiscoveredModel, error)) {
-	builtin := cliModelsOf(assistantEngineBuiltinModels(engine))
-	if apiKey == "" {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: builtin, Source: "builtin"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-	models, err := discover(ctx, apiKey)
-	if err != nil || len(models) == 0 {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: builtin, Source: "builtin"})
-		return
-	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: mergeCatalogModels(builtin, cliModelsOf(models)), Source: "official"})
-}
-
-// assistantGeminiModels is a variable so tests can stub the network.
-var assistantGeminiModels = discoverGeminiModels
-
-// geminiModelsEndpoint is the official Gemini ListModels API.
-const geminiModelsEndpoint = "https://generativelanguage.googleapis.com/v1beta/models"
-
-// discoverGeminiModels lists the Gemini models a Google AI Studio key may
-// use, following ListModels pages until they run out.
-func discoverGeminiModels(ctx context.Context, apiKey string) ([]assistantDiscoveredModel, error) {
-	var out []assistantDiscoveredModel
-	page := ""
-	for {
-		endpoint := geminiModelsEndpoint
-		if page != "" {
-			endpoint += "?pageToken=" + url.QueryEscape(page)
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("x-goog-api-key", apiKey)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		resp.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-		}
-		models, next := parseGeminiModels(body)
-		out = append(out, models...)
-		if next == "" || len(out) >= assistantDiscoveryMaxModels {
-			return out, nil
-		}
-		page = next
-	}
-}
-
-// parseGeminiModels reads one ListModels response page: the models capable of
-// generateContent, with bare IDs ("models/gemini-x" → "gemini-x").
-func parseGeminiModels(data []byte) ([]assistantDiscoveredModel, string) {
-	var page struct {
-		Models []struct {
-			Name        string   `json:"name"`
-			DisplayName string   `json:"displayName"`
-			Methods     []string `json:"supportedGenerationMethods"`
-		} `json:"models"`
-		NextPageToken string `json:"nextPageToken"`
-	}
-	if err := json.Unmarshal(data, &page); err != nil {
-		return nil, ""
-	}
-	var out []assistantDiscoveredModel
-	for _, model := range page.Models {
-		if !slices.Contains(model.Methods, "generateContent") {
-			continue
-		}
-		id := strings.TrimSpace(strings.TrimPrefix(model.Name, "models/"))
-		if id == "" {
-			continue
-		}
-		name := strings.TrimSpace(model.DisplayName)
-		if name == "" {
-			name = id
-		}
-		out = append(out, assistantDiscoveredModel{ID: id, Name: name})
-	}
-	return out, page.NextPageToken
-}
-
 // probePiModels answers 「获取可用模型」 for Pi behind a user Base URL: the
 // endpoint's published model list fetched live, floored by the installed
 // CLI's own pi-ai provider data when it knows the service.
@@ -551,7 +489,7 @@ func (h *usersHandlers) probePiModels(c *gin.Context, apiKey, baseURL, protocol 
 	floor := piCatalogModelsForBaseURL(baseURL)
 	if apiKey == "" {
 		if len(floor) > 0 {
-			c.JSON(http.StatusOK, cliModelProbeResult{Models: floor, Source: "remote"})
+			c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLIPi, floor, ""), Source: "remote"})
 			return
 		}
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "请先填写 " + assistantEngineLabel(runtime.AgentCLIPi) + " API Key"})
@@ -564,17 +502,17 @@ func (h *usersHandlers) probePiModels(c *gin.Context, apiKey, baseURL, protocol 
 		if len(floor) > 0 {
 			// The endpoint didn't answer; the CLI's catalog is still a
 			// deterministic list for the services it knows.
-			c.JSON(http.StatusOK, cliModelProbeResult{Models: floor, Source: "remote"})
+			c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLIPi, floor, ""), Source: "remote"})
 			return
 		}
 		if err != nil {
 			c.JSON(http.StatusOK, cliModelProbeResult{Error: "获取模型列表失败：" + err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIPi)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLIPi, cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLIPi)), ""), Source: "builtin"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: mergeCatalogModels(floor, cliModelsOf(live)), Source: "remote"})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLIPi, mergeCatalogModels(floor, cliModelsOf(live)), ""), Source: "remote"})
 }
 
 // piCatalogModelsForBaseURL reads the installed Pi's pi-ai provider data and
@@ -744,7 +682,25 @@ func parseCursorModels(output string) []domain.CLIModel {
 func cliModelsOf(models []assistantDiscoveredModel) []domain.CLIModel {
 	out := make([]domain.CLIModel, 0, len(models))
 	for _, model := range models {
-		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
+		out = append(out, domain.CLIModel{
+			ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort,
+			ReasoningEfforts: model.ReasoningEfforts, DiscoveredReasoningEfforts: model.DiscoveredReasoningEfforts,
+		})
 	}
 	return out
+}
+
+// Standard model listings often contain only IDs. Supply the CLI's catalog
+// levels when the endpoint omits them, and constrain advertised metadata to
+// levels this CLI can actually pass to its provider.
+func cliModelsWithEfforts(engine string, models []domain.CLIModel, baseURL string) []domain.CLIModel {
+	for i := range models {
+		id := models[i].ID
+		if engine != assistantEngineCodeBuddy {
+			id = engine + ":" + id
+		}
+		levels := append([]string{}, assistantModelEffortsForBaseURL(id, models, baseURL)...)
+		models[i].DiscoveredReasoningEfforts = &levels
+	}
+	return models
 }

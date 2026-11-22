@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -53,6 +54,16 @@ func hostHas(binary string) bool {
 		}
 	}
 	return false
+}
+
+// withoutGlobalCLIs hides the global install locations from
+// resolveAssistantEngineBin for one test, so a CLI preinstalled on the host
+// (the platform image ships dsh in /usr/local/bin) does not look installed.
+func withoutGlobalCLIs(t *testing.T) {
+	t.Helper()
+	saved := assistantCLIGlobalDirs
+	assistantCLIGlobalDirs = nil
+	t.Cleanup(func() { assistantCLIGlobalDirs = saved })
 }
 
 func TestInstallCLIRequiresLoginAndAllowlist(t *testing.T) {
@@ -166,9 +177,7 @@ chmod 755 "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 
 func TestInstallStatusSurvivesAReload(t *testing.T) {
 	resetCLIInstallJobs(t)
-	if hostHas("dsh") {
-		t.Skip("host dsh would hide the on-demand installation")
-	}
+	withoutGlobalCLIs(t)
 	root := t.TempDir()
 	npm := t.TempDir()
 	script := `#!/bin/sh
@@ -186,7 +195,18 @@ chmod 755 "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 	if err := os.WriteFile(filepath.Join(npm, "npm"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", npm+string(os.PathListSeparator)+"/usr/bin:/bin")
+	// Expose only the shell utilities used by the fake npm. A real dsh in
+	// any host binary directory must not satisfy the reload's status probe.
+	for _, name := range []string{"sleep", "mkdir", "chmod"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(path, filepath.Join(npm, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", npm)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
 	t.Setenv("AGENTFLOW_DSH_BIN", "")
