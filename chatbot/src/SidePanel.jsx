@@ -67,6 +67,16 @@ export function DraftCard({
     !draft.saved &&
     !draft.decision &&
     !!onDecide;
+  // 草稿落在侧栏里时用户可能根本没盯着看：卡片出现即闪浏览器标题提醒。
+  useEffect(() => {
+    if (!answerable) return;
+    try {
+      if (!document.title.startsWith("【待确认】")) {
+        const base = document.title.replace(/^【[^】]*】/, "");
+        document.title = `【待确认】${base}`;
+      }
+    } catch {}
+  }, [answerable]);
   const remaining = useCountdown(
     answerable && draft.proposal.timing === "start"
       ? draft.proposal.expiresAt
@@ -81,6 +91,12 @@ export function DraftCard({
       setError(operationError(e));
     } finally {
       setBusy(false);
+      // 用户处理完一张卡片就清掉标题提醒（其余待确认卡在面板里仍可见）。
+      try {
+        if (document.title.startsWith("【待确认】")) {
+          document.title = document.title.replace(/^【待确认】/, "");
+        }
+      } catch {}
     }
   };
   const [repositories, setRepositories] = useState([]),
