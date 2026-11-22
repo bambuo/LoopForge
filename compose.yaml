@@ -46,6 +46,9 @@ services:
       AGENTFLOW_PREVIEW_PUBLIC_URL: ${AGENTFLOW_PREVIEW_PUBLIC_URL:-}
       AGENTFLOW_PLATFORM_MCP_URL: ${AGENTFLOW_PLATFORM_MCP_URL:-http://platform:8080}
       AGENTFLOW_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-loopforge}_default
+      # 会话工作区在 compose 网络里，原生 CLI 的审批/网关回调按服务别名寻址。
+      AGENTFLOW_CONVERSATION_RELAY_HOST: ${AGENTFLOW_CONVERSATION_RELAY_HOST:-platform}
+      AGENTFLOW_CONVERSATION_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-loopforge}_default
       AGENTFLOW_LOCAL_SANDBOX: docker
       AGENTFLOW_ISOLATED_IMAGE: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.4.0}
       HOME: ${LOOPFORGE_DATA_DIR:?Run scripts/configure.sh first}/home
