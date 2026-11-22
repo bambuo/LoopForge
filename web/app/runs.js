@@ -439,9 +439,8 @@ function bindRunScrollLocks(host,runId,nodeId){
   if(graph){graph.scrollLeft=state.uiScroll.graphLeft||0;graph.onscroll=()=>{state.uiScroll.graphLeft=graph.scrollLeft}}
   if(main){main.scrollTop=state.uiScroll.mainTop||0;main.onscroll=()=>{state.uiScroll.mainTop=main.scrollTop}}
   const bindBottom=(el,key,stickKey)=>{if(!el)return;el.scrollTop=state.uiScroll[stickKey]?el.scrollHeight:state.uiScroll[key];el.onscroll=()=>{state.uiScroll[key]=el.scrollTop;state.uiScroll[stickKey]=(el.scrollHeight-el.clientHeight-el.scrollTop)<72}};
-  bindBottom(feed,'feedTop','feedStick');
-  // Telemetry is rendered newest-first, so its live edge is the top rather
-  // than the bottom used by chronological Worker logs.
+  // Worker 日志与实时轨迹一样最新在前，活动边缘在顶部：靠近顶部时保持粘住。
+  if(feed){feed.scrollTop=state.uiScroll.feedStick?0:state.uiScroll.feedTop;feed.onscroll=()=>{state.uiScroll.feedTop=feed.scrollTop;state.uiScroll.feedStick=feed.scrollTop<72}}
   if(tel){tel.scrollTop=state.uiScroll.telStick?0:state.uiScroll.telTop;tel.onscroll=()=>{state.uiScroll.telTop=tel.scrollTop;state.uiScroll.telStick=tel.scrollTop<72}}
 }
 function liveUsageHTML(r){
@@ -604,7 +603,7 @@ function patchRunLive(r){
   const logPage=state.runLogs?.runId===pg.runId&&state.runLogs.nodeId===pg.nodeId&&state.runLogs.loaded?state.runLogs:null;
   const telAdapter=state.runTelemetryAdapter||'live';
   const telPage=state.runTelemetry?.runId===pg.runId&&state.runTelemetry.nodeId===pg.nodeId&&state.runTelemetry.adapter===telAdapter&&state.runTelemetry.loaded?state.runTelemetry:null;
-  if(feed&&logPage){const html=visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>';if(feed.innerHTML!==html){feed.innerHTML=html;if(state.uiScroll.feedStick)feed.scrollTop=feed.scrollHeight;else feed.scrollTop=state.uiScroll.feedTop}}
+  if(feed&&logPage){const html=[...visibleWorkerLogs(logPage.items)].reverse().map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>';if(feed.innerHTML!==html){feed.innerHTML=html;if(state.uiScroll.feedStick)feed.scrollTop=0;else feed.scrollTop=state.uiScroll.feedTop}}
   if(tel&&telPage){const telemetry=compactTelemetry(telPage.items);const html=[...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`;if(tel.innerHTML!==html){tel.innerHTML=html;if(state.uiScroll.telStick)tel.scrollTop=0;else tel.scrollTop=state.uiScroll.telTop}}
   const heading=host.querySelector('.trace-section h3');if(heading)heading.textContent=telemetrySectionTitle(telAdapter);
   host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.classList.toggle('active',b.dataset.telAdapter===telAdapter));
