@@ -118,17 +118,24 @@ test('复制内置 SOP 时可把 CodeBuddy 角色切换为 Qoder', async (t) => 
     state.sopScope='generic';
   `);
   await app.evaluate(`openGenericTemplateModal('generic-delivery')`);
+  // 默认是「跟随责任人默认执行器」。
   const rows = app.document.querySelector('#genericTemplateRequirements').textContent;
   assert.match(rows, /执行器 · CodeBuddy.*未配置/s);
   const select = app.document.querySelector('#genericTemplateExecutor');
-  assert.equal(select.value, 'codebuddy');
+  assert.equal(select.value, 'inherit');
+  assert.match(select.textContent, /跟随责任人默认执行器/);
   assert.match(select.textContent, /Qoder/);
+  assert.match(app.document.querySelector('#genericTemplateExecutorHint').textContent, /跟随任务责任人的默认执行器/);
+  await app.evaluate(`adoptGenericTemplate()`);
+  await settle(8);
+  const inherited = app.router.calls.filter(c => c.path === '/api/workflows/generic-delivery/clone').pop();
+  assert.equal(inherited.body.executorId, 'inherit');
   select.value = 'qoder';
   select.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   assert.match(app.document.querySelector('#genericTemplateExecutorHint').textContent, /复制后 CodeBuddy 角色将切换为 Qoder/);
   await app.evaluate(`adoptGenericTemplate()`);
   await settle(8);
-  const clone = app.router.calls.find(c => c.path === '/api/workflows/generic-delivery/clone');
+  const clone = app.router.calls.find(c => c.path === '/api/workflows/generic-delivery/clone' && c.body.executorId === 'qoder');
   assert.equal(clone.body.executorId, 'qoder');
   assert.equal(clone.body.projectId, 'project-1');
 });

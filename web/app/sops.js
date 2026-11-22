@@ -427,16 +427,16 @@ function renderGenericRequirementRows(w,executors,loading=false){
   host.innerHTML=rows.map(r=>`<div class="req-row ${r.status?'':r.ok?'ok':'missing'}"><span class="req-mark">${r.status?'…':r.ok?'✓':'!'}</span><div><b>${escapeHTML(r.label)}</b><p>${escapeHTML(r.hint)}${r.nodeId?` · 节点「${escapeHTML(workflowNodeName(w,r.nodeId))}」`:''}</p></div><span class="req-state">${r.status||(r.ok?'已配置':'未配置')}</span>${r.fix?`<button type="button" class="button ghost small" data-fix-requirement="${escapeHTML(r.key)}">${escapeHTML(r.fixLabel)}</button>`:''}</div>`).join('')||'<div class="req-row ok"><span class="req-mark">✓</span><div><b>无额外依赖</b><p>复制到本项目后即可直接运行。</p></div></div>';
   host.querySelectorAll('[data-fix-requirement]').forEach(btn=>btn.onclick=()=>openGenericRequirementTarget(btn.dataset.fixRequirement));
 }
-// genericTemplateExecutorValue 返回复制时选中的执行器；codebuddy 表示保持模板默认。
+// genericTemplateExecutorValue 返回复制时选中的执行器：'inherit' 跟随任务
+// 责任人的默认执行器，'codebuddy' 保持模板默认，其余为钉死的 CLI。
 function genericTemplateExecutorValue(){
-  const value=state.genericTemplateExecutor||'codebuddy';
-  return value==='codebuddy'?'':value;
+  return state.genericTemplateExecutor||'inherit';
 }
 // renderGenericTemplateExecutor 渲染「复制后执行器」选择器与当前选择提示。
 function renderGenericTemplateExecutor(){
   const select=$('#genericTemplateExecutor');if(!select)return;
-  const current=state.genericTemplateExecutor||'codebuddy';
-  const options=(state.data?.executors||[]).filter(e=>e?.id).map(e=>({id:e.id,name:e.name||e.id,configured:sopExecutorConfigured(e.id)}));
+  const current=state.genericTemplateExecutor||'inherit';
+  const options=[{id:'inherit',name:'跟随责任人默认执行器',configured:true},...(state.data?.executors||[]).filter(e=>e?.id).map(e=>({id:e.id,name:e.name||e.id,configured:sopExecutorConfigured(e.id)}))];
   select.innerHTML=options.map(o=>`<option value="${escapeHTML(o.id)}" ${o.id===current?'selected':''}>${escapeHTML(o.name)}${o.configured?'':'（未配置）'}</option>`).join('');
   select.value=current;
   select.onchange=()=>{
@@ -446,6 +446,12 @@ function renderGenericTemplateExecutor(){
   };
   const hint=$('#genericTemplateExecutorHint');
   if(hint){
+    if(current==='inherit'){
+      hint.hidden=false;
+      hint.textContent='复制后角色将跟随任务责任人的默认执行器，运行时按责任人解析。';
+      hint.classList.remove('is-warn');
+      return;
+    }
     const chosen=options.find(o=>o.id===current);
     const show=!!chosen&&current!=='codebuddy';
     hint.hidden=!show;
@@ -467,7 +473,7 @@ async function openGenericTemplateModal(id){
   const w=(state.data?.workflows||[]).find(x=>x.id===id&&catalogGeneric(x));
   if(!w)return toast('通用模板不存在或已下架');
   state.genericTemplateId=id;
-  state.genericTemplateExecutor='codebuddy';
+  state.genericTemplateExecutor='inherit';
   renderGenericTemplateExecutor();
   $('#genericTemplateTitle').textContent=`使用「${w.name}」`;
   $('#genericTemplateIntro').textContent=w.description||'平台提供的通用流程模板，复制后归本项目所有。';

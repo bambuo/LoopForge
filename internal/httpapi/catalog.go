@@ -1356,7 +1356,9 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			return
 		}
 		executorID := strings.TrimSpace(req.ExecutorID)
-		if executorID != "" {
+		// "inherit" 是复制时「跟随责任人默认执行器」的标记，不是 CLI，
+		// 由 adopt 流程里的执行器替换逻辑处理。
+		if executorID != "" && executorID != genericTemplateExecutorInherit {
 			if _, ok := repo.BuiltInExecutor(executorID); !ok {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + executorID})
 				return

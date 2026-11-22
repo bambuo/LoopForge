@@ -875,6 +875,15 @@ func TestGenericTemplateCloneReplacesCodeBuddyRoles(t *testing.T) {
 		}
 	}
 
+	// An inherit copy into a fresh project clears the template's CodeBuddy
+	// pin: the copied roles follow the responsible person's default executor
+	// at run time (and carry no stale CodeBuddy model or effort).
+	inheritCopy := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPost, clonePath, map[string]any{
+		"id": "alpha-inherit-delivery", "name": "后端交付（跟随）", "owner": "alpha-team",
+		"projectId": "beta", "executorId": "inherit",
+	}, http.StatusCreated)
+	assertExecutors(inheritCopy, "")
+
 	// The body selects an allowlisted executor, never a command.
 	requestJSON[map[string]any](t, h, http.MethodPost, clonePath, map[string]any{
 		"id": "alpha-bad-executor", "name": "bad", "projectId": "alpha", "executorId": "rm -rf /",

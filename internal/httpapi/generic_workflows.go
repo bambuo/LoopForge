@@ -72,8 +72,10 @@ func (h *catalogHandlers) adoptGenericWorkflow(template domain.WorkflowDefinitio
 // returns the source-id -> project-id mapping used to rewrite node bindings.
 // A role that already exists in the project is reused, so adopting the
 // template twice never overwrites local edits. When executorID is set, roles
-// that still run on CodeBuddy (including reused clones) move to that executor;
-// roles deliberately set to another executor are left alone.
+// that still run on CodeBuddy (including reused clones) move to that executor
+// — "inherit" instead clears the CodeBuddy pin so the copied role follows the
+// responsible person's default executor; roles deliberately set to another
+// executor are left alone either way.
 func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID, executorID string) (map[string]string, error) {
 	template, ok := h.repo.GenericTemplateByWorkflow(workflowID)
 	if !ok {
@@ -123,8 +125,13 @@ func (h *catalogHandlers) cloneGenericTemplateAgents(workflowID, projectID, exec
 	return remap, nil
 }
 
-// genericTemplateExecutorReplacement 把仍用 CodeBuddy 的角色改为复制时选定的执行器。
-// 已显式使用其他执行器的角色保持不变，避免覆盖模板外的本地选择。
+// genericTemplateExecutorInherit 清空复制角色的执行器，使其跟随任务责任人的
+// 默认执行器（运行时按责任人解析），而不是钉死在模板自带的 CodeBuddy 上。
+const genericTemplateExecutorInherit = "inherit"
+
+// genericTemplateExecutorReplacement 把仍用 CodeBuddy 的角色改为复制时选定的
+// 执行器；inherit 则改为跟随责任人。已显式使用其他执行器的角色保持不变，
+// 避免覆盖模板外的本地选择。
 func genericTemplateExecutorReplacement(agent *domain.AgentDefinition, executorID string, now time.Time) bool {
 	executorID = strings.TrimSpace(executorID)
 	if executorID == "" || executorID == "codebuddy" {
@@ -134,11 +141,16 @@ func genericTemplateExecutorReplacement(agent *domain.AgentDefinition, executorI
 	if current != "" && current != "codebuddy" {
 		return false
 	}
-	agent.ExecutorID = executorID
-	// A CodeBuddy model or effort level is not portable to another CLI.
+	agent.UpdatedAt = now
+	// A CodeBuddy model or effort level is not portable to another CLI, and an
+	// inherited role must not drag one along either.
 	agent.Model = ""
 	agent.Effort = ""
-	agent.UpdatedAt = now
+	if executorID == genericTemplateExecutorInherit {
+		agent.ExecutorID = ""
+		return true
+	}
+	agent.ExecutorID = executorID
 	return true
 }
 
