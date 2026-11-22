@@ -270,3 +270,33 @@ test('每个模型行在自己删除按钮旁提供测试按钮', async (t) => {
   assert.doesNotMatch(foot.slice(0, foot.indexOf('credential-confirm')), /data-credential-act="cli-test"/);
   assert.ok(kind);
 });
+
+test('个人配置标出服务端安装状态并提供安装入口', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.data.users[0].id=1;state.currentUser={...state.data.users[0],id:1,isGuest:false};state.data.users[0]=state.currentUser`);
+  app.router.get('/api/assistant/cli-install/status', {
+    engines: { kimi: { status: 'missing' }, dsh: { status: 'installed' }, qoder: { status: 'failed', error: 'boom' } },
+  });
+  await app.evaluate(`renderPersonalSettings()`);
+  await settle(4);
+
+  // 未配置的 CLI 在「新增执行器」菜单里就地标注安装状态。
+  const menu = app.document.querySelector('[data-credential-add-menu="model"]');
+  assert.match(menu.textContent, /Kimi Code（服务器未安装）/);
+  assert.doesNotMatch(menu.textContent, /DeepSeek Harness（服务器未安装）/);
+
+  // 向导里给出安装入口（状态 + 按钮）。
+  await app.evaluate(`openCredentialWizard('agentCli.kimi')`);
+  const wizardBody = app.document.querySelector('#credentialWizard .credential-dialog-body');
+  assert.match(wizardBody.textContent, /服务器未安装/);
+  const install = wizardBody.querySelector('[data-credential-act="cli-install"][data-cli-engine="kimi"]');
+  assert.ok(install, 'the wizard offers the server install');
+  await app.evaluate(`closeCredentialWizard(true)`);
+
+  // 已配置但二进制缺失：行子标题直接标出安装状态。
+  await app.evaluate(`state.data.users[0].agentCliCredentials={...(state.data.users[0].agentCliCredentials||{}),kimi:{apiKeyConfigured:true}};renderPersonalSettings()`);
+  await settle(4);
+  const kimiRow = app.document.querySelector('[data-credential-row="agentCli.kimi"]');
+  assert.match(kimiRow.textContent, /服务器未安装/);
+});

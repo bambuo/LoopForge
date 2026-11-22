@@ -148,10 +148,9 @@ async function loadCredentialCLIInstall(){
     state.cliInstall=(data&&data.engines)||{};
     state.cliInstallLoaded=true;
   }catch{return}
-  document.querySelectorAll('#credentialPanel [data-credential-row]').forEach(row=>{
-    repaintCredentialInstall(row.dataset.credentialRow);
-    repaintCredentialRow(row.dataset.credentialRow);
-  });
+  // 状态到达后整面板重绘：行上的编辑器/子标题和「新增执行器」菜单都要带上
+  // 安装状态（菜单选项是加载前渲染的，单刷行会漏掉它们）。
+  renderCredentialPanel();
 }
 function repaintCredentialInstall(key){
   const row=$(`#credentialPanel [data-credential-row="${key}"]`),kind=credentialKind(key);
@@ -218,14 +217,15 @@ async function testCredentialCatalogModel(row,catalog,button){
   }
 }
 async function installCredentialCLI(row,button){
-  const kind=credentialKind(row.dataset.credentialRow),engine=credentialCLI(kind);
-  if(!engine)return;
-  const key=row.dataset.credentialRow;
+  // 行内按钮从行上取 kind；向导里的安装按钮没有行，从打开的向导取。
+  const key=row?.dataset.credentialRow||credentialWizard?.kind||'';
+  const kind=credentialKind(key);
+  const engine=button?.dataset.cliEngine||credentialCLI(kind);
+  if(!engine||!kind)return;
   state.cliInstall={...(state.cliInstall||{}),[engine]:{status:'installing'}};
   repaintCredentialInstall(key);
-  // The shortcut sits on the collapsed row, so repaint it too: the click has
-  // to show 安装中 long before npm finishes on the server.
   repaintCredentialRow(key);
+  if(credentialWizard)paintCredentialWizard(0);
   try{
     await api('/api/assistant/cli-install',{method:'POST',body:JSON.stringify({engine}),silent:true});
     toast(`${kind.name} 已安装在服务器上`);
@@ -233,6 +233,7 @@ async function installCredentialCLI(row,button){
     toast(err.message||'安装失败','err');
   }
   await loadCredentialCLIInstall();
+  if(credentialWizard)paintCredentialWizard(0);
 }
 function credentialProtocol(kind,user){
   const options=kind.protocol?.options||[],value=credentialValue(user,kind.protocol?.name||'');
@@ -722,7 +723,11 @@ function credentialBadgeHTML(status){
 }
 function credentialSubline(kind,user){
   const dot='<i class="credential-dot"></i>',use=`<span>${escapeHTML(kind.use)}</span>`;
-  if(!credentialConfigured(kind,user))return use;
+  // 服务端二进制的安装状态独立于凭据：凭据配了但 CLI 缺失时行上直接标出来。
+  const install=credentialInstallInfo(kind),installState=install?.status||'';
+  const installMark=installState&&installState!=='installed'
+    ?`<span class="is-warn">${installState==='installing'?'正在安装':'服务器未安装'}</span>${dot}`:'';
+  if(!credentialConfigured(kind,user))return installMark+use;
   if(kind.key==='gitToken'){
     const verify=gitTokenVerifyFor({id:state.currentUser?.id}),result=verify?.result,source='<span>https://github.com</span>';
     if(verify?.busy)return source+dot+'<span class="is-info">正在校验…</span>';
@@ -847,7 +852,12 @@ function credentialAddMenu(group,user){
   const git=group.id==='platform';
   const label=git?'新增 Git 配置':'新增执行器';
   const options=git?GIT_ADD_OPTIONS:CREDENTIAL_KINDS.filter(kind=>kind.group==='model'&&!credentialConfigured(kind,user))
-    .map(kind=>({id:kind.key,name:kind.name,logo:kind.logo,monochrome:kind.monochrome}));
+    .map(kind=>{
+      const install=credentialInstallInfo(kind),installState=install?.status||'';
+      // 未安装的 CLI 在菜单里就地标出，选进去后向导里还有安装入口。
+      const suffix=installState==='installing'?'（安装中）':installState&&installState!=='installed'?'（服务器未安装）':'';
+      return {id:kind.key,name:kind.name+suffix,logo:kind.logo,monochrome:kind.monochrome};
+    });
   if(!options.length)return '';
   return `<div class="credential-add-row">
     <select class="select credential-add-menu" data-credential-add-menu="${group.id}" data-icon="plus" data-min-width="216" aria-label="${label}">
@@ -1468,6 +1478,7 @@ function credentialWizardStepTwoHTML(kind){
   const validity=credentialWizardValid();
   const {text:secretHint,tone:secretTone}=credentialWizardSecretHint(kind,wizard,validity);
   const secretField=credentialFieldHTML({label:github?'个人访问令牌（PAT）':kind.short,name:'secret',id:'credentialWizardSecret',placeholder:kind.placeholder,hint:secretHint,hintTone:secretTone});
+  const install=kind.cli?credentialInstallHTML(kind):'';
   const extraField=!kind.extra?''
     :kind.extra.options?credentialSelectFieldHTML(kind,wizard.extra)
     :credentialFieldHTML({label:kind.extra.label,note:kind.extra.note||(kind.extra.url?'可选 · 留空使用官方地址':''),name:'extra',type:kind.extra.url?'url':'text',value:wizard.extra,placeholder:kind.extra.placeholder,hint:''});
@@ -1477,11 +1488,11 @@ function credentialWizardStepTwoHTML(kind){
   const fields=(kind.extra?.options?extraField+secretField:secretField+extraField+protocolField)+baseField;
   if(isDirectExecutorForm(wizard)){
     const error=wizard.error?`<p class="credential-vline is-err" role="alert">${escapeHTML(wizard.error)}</p>`:'';
-    return `<div class="credential-direct-heading">${credentialLogo(kind)}<h3>新增 ${escapeHTML(kind.name)}</h3></div>
+    return `<div class="credential-direct-heading">${credentialLogo(kind)}<h3>新增 ${escapeHTML(kind.name)}</h3></div>${install}
       <fieldset class="credential-fields"${wizard.saving?' disabled':''}>${fields}</fieldset>
       <details class="credential-direct-help"><summary>如何获取密钥</summary><ol class="credential-guide">${guide}</ol></details>${error}`;
   }
-  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>${github?'使用访问令牌':'配置 '+escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${methods}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
+  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>${github?'使用访问令牌':'配置 '+escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${install}${methods}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
     ${fields}
   </div>`;
 }
@@ -1606,6 +1617,8 @@ function credentialWizardClick(event){
   if(target.closest('[data-wizard-close]'))return closeCredentialWizard();
   if(target.closest('[data-wizard-done]'))return closeCredentialWizard();
   const eye=target.closest('[data-credential-eye]');if(eye)return toggleCredentialSecret(eye);
+  const install=target.closest('[data-credential-act="cli-install"]');
+  if(install&&!install.disabled)return installCredentialCLI(null,install);
   const link=target.closest('[data-wizard-link]');if(link)return markCredentialGuide(Number(link.dataset.wizardLink));
   const option=target.closest('[data-wizard-kind]');
   if(option&&!option.disabled){
@@ -1721,6 +1734,7 @@ async function renderPersonalSettings(){
   const panel=host.querySelector('#credentialPanel');
   bindCredentialPanel(panel);
   renderCredentialPanel();
+  loadCredentialCLIInstall();
   loadCredentialEffortCatalogs().then(()=>panel.querySelectorAll('[data-credential-catalog]').forEach(refreshCredentialCatalogEfforts));
   hydrateCredentialIcons(host);
   setTimeout(()=>panel.classList.remove('is-entering'),900);
