@@ -160,15 +160,18 @@ function repaintCredentialInstall(key){
 }
 function credentialInstallHTML(kind){
   const engine=credentialCLI(kind),info=credentialInstallInfo(kind),status=info?.status||'';
-  // Only a known state is worth a row: an engine outside the server's install
-  // allowlist (no status entry) has no button to offer.
+  // Only a known state is worth a row: an engine with no status entry (not a
+  // chat executor) has nothing to report.
   const known=status==='missing'||status==='failed'||status==='installing';
   if(!engine||!state.cliInstallLoaded||!known)return `<div data-credential-install hidden></div>`;
   const name=escapeHTML(kind.name),failed=status==='failed',busy=status==='installing';
+  // 不可安装的执行器（ZCode 由部署方提供）只标状态，不给安装动作。
+  const installable=info?.installable!==false;
   const detail=busy?'安装在服务器上继续，关闭页面也不会中断。'
     :failed?escapeHTML(info.error||'安装失败，可以重试。')
+    :!installable?'由部署方提供，平台无法自动安装，请让管理员装好后再用。'
     :'对话和以它运行的 SOP 节点都需要它，先在这台服务器上装好再用。';
-  const action=busy?''
+  const action=busy||!installable?''
     :`<button type="button" class="credential-btn secondary credential-ink" data-credential-act="cli-install" data-cli-engine="${escapeHTML(engine)}">${failed?'重试安装':'安装到服务器'}</button>`;
   return `<div class="credential-note is-warn credential-install" data-credential-install data-cli-engine="${escapeHTML(engine)}">${credentialGlyph('alert',14)}<span><b>${busy?'正在安装':(failed?'安装失败':'服务器未安装')}</b> <code>${name}</code> · <small>${detail}</small></span>${action}</div>`;
 }
@@ -221,7 +224,8 @@ async function installCredentialCLI(row,button){
   const key=row?.dataset.credentialRow||credentialWizard?.kind||'';
   const kind=credentialKind(key);
   const engine=button?.dataset.cliEngine||credentialCLI(kind);
-  if(!engine||!kind)return;
+  const installable=state.cliInstall?.[engine]?.installable!==false;
+  if(!engine||!kind||!installable)return;
   state.cliInstall={...(state.cliInstall||{}),[engine]:{status:'installing'}};
   repaintCredentialInstall(key);
   repaintCredentialRow(key);

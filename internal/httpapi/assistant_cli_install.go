@@ -53,17 +53,20 @@ func (h *assistantHandlers) cliInstallStatus(c *gin.Context) {
 	h.answerCLIInstall(c, c.Query("engine"), false)
 }
 
-// cliInstallStatuses reports every allowlisted CLI at once, so 个人配置 can
-// offer the install button before a conversation fails.
+// cliInstallStatuses reports every chat executor at once, so 个人配置 can mark
+// which CLIs the server has (and offer installs for the installable ones).
+// Executors outside the install allowlist (ZCode) are probed for their binary
+// too: a missing one shows 服务器未安装 without an install action.
 func (h *assistantHandlers) cliInstallStatuses(c *gin.Context) {
 	if _, ok := h.requestUser(c.Request, true); !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录后再安装 CLI"})
 		return
 	}
-	engines := make(map[string]gin.H, len(runtime.OnDemandCLIEngines()))
-	for _, engine := range runtime.OnDemandCLIEngines() {
+	allEngines := append([]string{assistantEngineCodeBuddy, assistantEngineCodex, assistantEngineClaude}, runtime.AgentCLIKinds...)
+	engines := make(map[string]gin.H, len(allEngines))
+	for _, engine := range allEngines {
 		status, errText := h.cliInstallState(engine)
-		entry := gin.H{"status": status}
+		entry := gin.H{"status": status, "installable": runtime.OnDemandInstallable(engine)}
 		if errText != "" {
 			entry["error"] = errText
 		}

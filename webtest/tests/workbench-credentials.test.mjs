@@ -276,15 +276,26 @@ test('个人配置标出服务端安装状态并提供安装入口', async (t) =
   t.after(app.close);
   app.evaluate(`state.data.users[0].id=1;state.currentUser={...state.data.users[0],id:1,isGuest:false};state.data.users[0]=state.currentUser`);
   app.router.get('/api/assistant/cli-install/status', {
-    engines: { kimi: { status: 'missing' }, dsh: { status: 'installed' }, qoder: { status: 'failed', error: 'boom' } },
+    engines: {
+      kimi: { status: 'missing' }, dsh: { status: 'installed' },
+      qoder: { status: 'failed', error: 'boom' },
+      // 不可安装的执行器也报告二进制状态，但没有安装动作。
+      zcode: { status: 'missing', installable: false },
+    },
   });
   await app.evaluate(`renderPersonalSettings()`);
   await settle(4);
 
-  // 未配置的 CLI 在「新增执行器」菜单里就地标注安装状态。
+  // 未配置的 CLI 在「新增执行器」菜单里就地标注安装状态：红名，不写长后缀。
   const menu = app.document.querySelector('[data-credential-add-menu="model"]');
-  assert.match(menu.textContent, /Kimi Code（服务器未安装）/);
-  assert.doesNotMatch(menu.textContent, /DeepSeek Harness（服务器未安装）/);
+  const kimiOption = menu.querySelector('option[value="agentCli.kimi"]');
+  assert.equal(kimiOption.textContent, 'Kimi Code');
+  assert.equal(kimiOption.hasAttribute('data-option-danger'), true, 'not-installed options carry the danger mark');
+  assert.equal(menu.querySelector('option[value="agentCli.dsh"]').hasAttribute('data-option-danger'), false);
+  // 不可安装的执行器（ZCode）同样红名——缺二进制就该被看见。
+  const zcodeOption = menu.querySelector('option[value="agentCli.zcode"]');
+  assert.equal(zcodeOption.textContent, 'ZCode');
+  assert.equal(zcodeOption.hasAttribute('data-option-danger'), true, 'a missing non-installable CLI is red too');
 
   // 向导里给出安装入口（状态 + 按钮）。
   await app.evaluate(`openCredentialWizard('agentCli.kimi')`);
@@ -292,6 +303,14 @@ test('个人配置标出服务端安装状态并提供安装入口', async (t) =
   assert.match(wizardBody.textContent, /服务器未安装/);
   const install = wizardBody.querySelector('[data-credential-act="cli-install"][data-cli-engine="kimi"]');
   assert.ok(install, 'the wizard offers the server install');
+  await app.evaluate(`closeCredentialWizard(true)`);
+
+  // 不可安装的执行器在向导里只标状态，不给安装动作。
+  await app.evaluate(`openCredentialWizard('agentCli.zcode')`);
+  const zcodeWizard = app.document.querySelector('#credentialWizard .credential-dialog-body');
+  assert.match(zcodeWizard.textContent, /服务器未安装/);
+  assert.match(zcodeWizard.textContent, /无法自动安装/);
+  assert.equal(zcodeWizard.querySelector('[data-credential-act="cli-install"]'), null, 'a non-installable CLI gets no install action');
   await app.evaluate(`closeCredentialWizard(true)`);
 
   // 已配置但二进制缺失：行子标题直接标出安装状态。
