@@ -319,3 +319,31 @@ test('个人配置标出服务端安装状态并提供安装入口', async (t) =
   const kimiRow = app.document.querySelector('[data-credential-row="agentCli.kimi"]');
   assert.match(kimiRow.textContent, /服务器未安装/);
 });
+
+test('模型目录的测试按钮把配置发到 cli-test 并回填结果', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.data.users[0].id=1;state.currentUser={...state.data.users[0],id:1,isGuest:false};state.data.users[0]=state.currentUser`);
+  const calls = [];
+  app.router.post('/api/users/1/cli-test', (call) => { calls.push(JSON.stringify(call.body)); return { ok: true, reply: 'pong', latencyMs: 12 }; });
+  await app.evaluate(`
+    state.data.users[0].codexApiKeyConfigured=true;state.data.users[0].codexApiKey='sk-test';
+    state.data.users[0].codexModels=[{id:'gpt-6-luna'}];
+    state.data.executors=[{id:'codex',name:'Codex',kind:'codex'}];
+    renderPersonalSettings();
+  `);
+  await settle(3);
+  const row = app.document.querySelector('[data-credential-row="codexApiKey"]');
+  assert.ok(row, 'the codex row exists');
+  const catalog = row.querySelector('[data-credential-catalog]');
+  assert.ok(catalog, 'the catalog renders inside the editor');
+  const button = catalog.querySelector('[data-catalog-act="test"]');
+  assert.ok(button, 'the per-model test button renders');
+  button.click();
+  await settle(3);
+  assert.equal(calls.length, 1, 'the cli-test request fires exactly once');
+  const sent = JSON.parse(calls[0]);
+  assert.equal(sent.engine, 'codex');
+  assert.equal(sent.model, 'gpt-6-luna');
+  assert.match(row.textContent, /连接正常/);
+});
