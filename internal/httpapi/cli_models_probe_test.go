@@ -191,6 +191,42 @@ func TestParsePiAiCatalog(t *testing.T) {
 	}
 }
 
+func TestProbeCLIModelsUsesOfficialEndpointWithoutBaseURL(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	original := assistantEngineDiscover
+	t.Cleanup(func() { assistantEngineDiscover = original })
+	handlers := &usersHandlers{deps: h.deps}
+	for _, check := range []struct {
+		engine, url string
+		anthropic   bool
+	}{
+		{"codex", "https://api.openai.com/v1", false},
+		{"claude-code", "https://api.anthropic.com", true},
+		{"kimi", "https://api.kimi.com/coding/v1", false},
+		{"dsh", "https://api.deepseek.com", false},
+		{"zcode", "https://open.bigmodel.cn/api/coding/paas/v4", false},
+	} {
+		t.Run(check.engine, func(t *testing.T) {
+			called := false
+			assistantEngineDiscover = func(_ context.Context, anthropic bool, key, endpoint string) ([]assistantDiscoveredModel, error) {
+				called = true
+				if anthropic != check.anthropic || endpoint != check.url || key != "fixture-key" {
+					t.Fatalf("unexpected probe: Anthropic=%v endpoint=%s", anthropic, endpoint)
+				}
+				return []assistantDiscoveredModel{{ID: "official-model"}}, nil
+			}
+			input := bytes.NewBufferString(`{"engine":"` + check.engine + `","apiKey":"fixture-key","baseUrl":""}`)
+			c, w := workbenchContext(owner, http.MethodPost, "/", input)
+			c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(owner.ID, 10)}}
+			handlers.probeCLIModels(c)
+			if !called || w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"official"`) ||
+				!strings.Contains(w.Body.String(), `"id":"official-model"`) || !strings.Contains(w.Body.String(), `"connected":true`) {
+				t.Fatalf("result %d %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestProbeCodeBuddyIOAModelsReportsMissingCLI(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	bin := t.TempDir()

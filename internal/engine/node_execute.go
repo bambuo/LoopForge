@@ -368,6 +368,16 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		e.nodeFailedAt(runID, node, executionAttempt, executionGeneration, err, allowReject)
 	}
+	if currentLease.ExecutionContext.SharedScheduleID != "" {
+		version, err := e.repo.SharedScheduleVersion(currentLease.ExecutionContext.SharedScheduleID, currentLease.ExecutionContext.SharedScheduleVersion)
+		if err == nil {
+			err = e.repo.ValidateSharedScheduleAssets(version)
+		}
+		if err != nil {
+			failNode(err, false)
+			return
+		}
+	}
 	if node.Type == "sop" {
 		e.executeSOPNode(ctx, runID, wf, node, executionAttempt, executionGeneration)
 		return
@@ -421,6 +431,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			failNode(fmt.Errorf("sandbox profile %q not found", wf.SandboxProfileID), nodeRejects(node))
 			return
 		}
+	}
+	if err := domain.ValidateFrozenSandbox(profile); err != nil {
+		failNode(err, false)
+		return
 	}
 	requirements, err := workflowSandboxRequirements(e.repo, wf)
 	if err != nil {
@@ -495,7 +509,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if !stagingCheckout {
 			return nil
 		}
-		if err := prepareRepositories(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
+		if err := prepareRepositories(runtime.WithRepositoryCacheIn(ctx, sb.Unwrap()), sb.Workspace(), current.RepositoryContexts()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "" || len(gitCredentials.GitHTTPCredentials) > 0)
 		}
 		for _, rc := range current.RepositoryContexts() {
@@ -767,6 +781,15 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 			if repositoryFallback != "" {
 				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
+			}
+			if current.ExecutionContext.SharedScheduleID != "" {
+				version, assetErr := e.repo.SharedScheduleVersion(current.ExecutionContext.SharedScheduleID, current.ExecutionContext.SharedScheduleVersion)
+				if assetErr != nil {
+					return "", assetErr
+				}
+				if assetErr = e.repo.ValidateSharedScheduleAssets(version); assetErr != nil {
+					return "", assetErr
+				}
 			}
 			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
 			warnMCPSkipped := func(message string) {

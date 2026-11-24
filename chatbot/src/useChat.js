@@ -98,9 +98,7 @@ export function useChat() {
     [sandboxes, setSandboxes] = useState([]),
     [sandboxProfileId, setSandboxProfileId] = useState(""),
     [sandboxBusy, setSandboxBusy] = useState(false),
-    [workspaceSandbox, setWorkspaceSandbox] = useState(null),
-    [workspaceExecution, setWorkspaceExecution] = useState(null),
-    [workspaceExecutionError, setWorkspaceExecutionError] = useState(""),
+    [loadedWorkspace, setLoadedWorkspace] = useState(null),
     [users, setUsers] = useState([]),
     [draftIssueId, setDraftIssueId] = useState(
       new URLSearchParams(location.search).get("issueId") || "",
@@ -469,7 +467,12 @@ export function useChat() {
       setGenerationKnown(activeId);
       if (!running) setStopRequest((old) => old?.generationId === g.id ? null : old);
       if (running && ["platform", "workspace"].includes(g.runtimeMode)) {
-        setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
+        setSession((stored) => {
+          if (stored?.id !== activeId) return stored;
+          const workspaceRunId = g.workspaceRunId || stored.workspaceRunId;
+          if (stored.runtimeMode === g.runtimeMode && workspaceRunId === stored.workspaceRunId) return stored;
+          return { ...stored, runtimeMode: g.runtimeMode, workspaceRunId };
+        });
       }
       if (!running && needsTranscript) {
         await refreshSessions();
@@ -650,13 +653,18 @@ export function useChat() {
   }
   const runnerId = composerRunnerId(session);
   const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
+  const checkServerCLI = executionMachines.machinesReady && !runnerId &&
+    !session?.executionTarget?.runnerId && !session?.runId && session?.runtimeMode !== "workspace";
   const availableExecutors = EXECUTORS.flatMap(item => {
     const local = ["codex", "claude-code", "agy"].includes(item.id) &&
       runner?.runtimes?.some(runtime => runtime.provider === item.id && runtime.authMode !== "personal");
     if (local) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
-    const configured = catalogEngines.find(engine => engine.id === item.id)?.configured ??
-      personalEngineConfigured(user, item.id);
-    return configured || (item.id === "codebuddy" && sponsoredModel) ? [item] : [];
+    const option = catalogEngines.find(engine => engine.id === item.id);
+    const configured = option?.configured ?? personalEngineConfigured(user, item.id);
+    if (!configured && !(item.id === "codebuddy" && sponsoredModel)) return [];
+    return [checkServerCLI && option?.serverMissing
+      ? { ...item, detail: "平台服务器未安装 CLI" }
+      : item];
   });
   // Drafts can use any available executor. A recorded conversation keeps its
   // executor even if its authentication changes.
@@ -667,6 +675,9 @@ export function useChat() {
     (session?.executionTarget?.pool === "runner" && !executionMachines.machinesReady));
   const executor = keepSessionExecutor || !user || user.isGuest ? selection.executor :
     (preferred || availableExecutor(selection.executor) || availableExecutors[0])?.id || "";
+  const missingServerCLI = checkServerCLI
+    ? catalogEngines.find(item => item.id === executor && item.serverMissing)
+    : undefined;
   const { model, effort } = executor === selection.executor ? selection : { model: null, effort: null };
   function resolveComposerModel(
     { executor, model, effort }, conversation, draft,
@@ -1060,7 +1071,7 @@ export function useChat() {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
-    if (!executor) return false;
+    if (!executor || missingServerCLI) return false;
     const currentProjectId = sessionRef.current?.projectId || "";
     const approval = fromQueue
       ? queuedApproval({ approvalMode, approvalUserId, approvalProjectId }, user?.id, currentProjectId)
@@ -1353,7 +1364,7 @@ export function useChat() {
       let stored = await api(sessionPath(id));
       let reply = JSON.parse(stored.messages[messageIndex].content);
       let draft = reply.drafts[draftIndex];
-      if (draft.saved || draft.inherited) return null;
+      if (draft.saved || draft.inherited || draft.decision === "rejected") return null;
       if (generation?.status === "running")
         throw Error("请等待回复结束后再确认操作。");
       if (draft.proposal && !draft.decision) {
@@ -1541,22 +1552,30 @@ export function useChat() {
     } catch (e) { setError(e.message); return false; }
     finally { sandboxBusyRef.current = false; setSandboxBusy(false); }
   }
+  const workspaceRunId = session?.workspaceRunId || session?.runId;
   useEffect(() => {
+    if (!workspaceRunId) return;
     let current = true;
-    setWorkspaceSandbox(null);
-    setWorkspaceExecution(null);
-    setWorkspaceExecutionError("");
-    const id = session?.workspaceRunId || session?.runId;
-    if (id) void api(`/api/runs/${encodeURIComponent(id)}`).then((run) => {
-      if (current) {
-        setWorkspaceSandbox(run.workflowSnapshot?.sandboxSnapshot?.profile || { id: run.workflowSnapshot?.sandboxProfileId });
-        setWorkspaceExecution(run.executionContext || {});
-      }
+    void api(`/api/runs/${encodeURIComponent(workspaceRunId)}`).then((run) => {
+      if (!current) return;
+      setLoadedWorkspace({
+        id: workspaceRunId,
+        workflow: run.workflowSnapshot,
+        execution: run.executionContext || {},
+      });
     }).catch(() => {
-      if (current) setWorkspaceExecutionError("无法加载工作区执行机器");
+      if (current) setLoadedWorkspace({ id: workspaceRunId, error: "无法加载工作区执行机器" });
     });
     return () => { current = false; };
-  }, [session?.workspaceRunId, session?.runId]);
+  }, [workspaceRunId]);
+  const workspace = loadedWorkspace?.id === workspaceRunId ? loadedWorkspace : null;
+  const sandboxSnapshot = workspace?.workflow?.sandboxSnapshot?.profile;
+  const workspaceSandboxId = sandboxSnapshot?.id || workspace?.workflow?.sandboxProfileId;
+  const workspaceSandbox = workspaceSandboxId && (
+    sandboxSnapshot
+      ? { ...sandboxSnapshot, id: workspaceSandboxId }
+      : sandboxes.find((row) => row.id === workspaceSandboxId) || { id: workspaceSandboxId }
+  );
   async function refresh() {
     await executionMachines.refreshMachines();
     const sandboxRows = await api("/api/sandboxes").catch(() => null);
@@ -1609,14 +1628,15 @@ export function useChat() {
     sandboxProfileId: activeId ? session?.sandboxProfileId || "" : sandboxProfileId,
     sandboxLocked: !!session?.runId,
     sandboxBusy,
-    workspaceSandbox,
-    workspaceExecution,
-    workspaceExecutionError,
+    workspaceSandbox: workspaceSandbox || null,
+    workspaceExecution: workspace?.execution || null,
+    workspaceExecutionError: workspace?.error || "",
     ...executionMachines,
     selectSandbox,
     models: executorModels,
     executor,
     executors: user ? availableExecutors : [],
+    missingServerCLI,
     setExecutor: chooseExecutor,
     sessions,
     session,

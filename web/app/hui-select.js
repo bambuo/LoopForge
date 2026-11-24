@@ -200,7 +200,7 @@
         button.setAttribute('aria-selected', String(i === index));
         button.classList.toggle('is-selected', i === index);
         // 选项自带的危险标记（如未安装的执行器）落到按钮上，由主题上色。
-        if (option.hasAttribute('data-option-danger')) button.classList.add('is-danger');
+        if (typeof option.hasAttribute === 'function' && option.hasAttribute('data-option-danger')) button.classList.add('is-danger');
         button.disabled = !!(option.disabled || group?.disabled);
         button.huiIndex = i;
         button.searchText = optionSearch(option);

@@ -56,6 +56,10 @@ class FakeNode {
     if (name === 'class') return this.className;
     return Object.hasOwn(this.attributes, name) ? this.attributes[name] : null;
   }
+  hasAttribute(name) {
+    if (name === 'class') return this._classes.size > 0;
+    return Object.hasOwn(this.attributes, name);
+  }
   appendChild(child) {
     if (child.parentNode) child.parentNode.children.splice(child.parentNode.children.indexOf(child), 1);
     child.parentNode = this;
