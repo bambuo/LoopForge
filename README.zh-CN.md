@@ -43,7 +43,7 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 | | **与 Main Bot 对话** | **运行 SOP** |
 | --- | --- | --- |
 | 适合 | 探索、快速修复、与 Agent 反复迭代 | 阶段固定、需要签字确认的可重复交付 |
-| 如何运行 | Main Bot 按需打开[对话工作区](docs/conversation-workspaces.md)（带项目仓库的 Docker 沙箱），并把项目角色作为子 Agent 调用 | 引擎按顺序执行 Agent、脚本、人工关口和子 SOP 节点，每次运行有独立沙箱 |
+| 如何运行 | Main Bot 按需打开[对话工作区](docs/功能/06-对话工作区与原生CLI.md)（带项目仓库的 Docker 沙箱），并把项目角色作为子 Agent 调用 | 引擎按顺序执行 Agent、脚本、人工关口和子 SOP 节点，每次运行有独立沙箱 |
 | 你如何把控 | 回复中途排队或「引导」消息；在对话里暂停、恢复或接管正在运行的 SOP | 在人工关口审批；打回到指定环节返工；从任意节点重试或重跑 |
 | 交付物 | PR/MR，或直推合入共享分支（`mode=direct`） | 文档、代码或 PR，以及每个节点的产物和日志 |
 
@@ -90,7 +90,7 @@ MIRROR=ghcr.nju.edu.cn ./start.sh pull
 
 打开安装脚本输出的地址创建账号，第一个账号自动成为管理员。服务默认监听 `0.0.0.0:8090`；在云主机上，安装脚本会从云厂商的元数据服务读取公网 IP 并直接打印出来，放通安全组端口即可访问，或配置 HTTPS 反向代理；管理员账号创建前，建议只允许你的 IP 访问。首页的「快速接入」会带你配置模型凭据、绑定仓库并选好默认 SOP。
 
-GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-repositories-over-ssh)，用个人密钥检出和推送分支。Issue 与 PR/MR 自动化需要托管平台的 API Token 或另行配置的 MCP。[CNB 官方仅支持 HTTPS + 访问令牌](https://docs.cnb.cool/zh/guide/git-access.html)。
+GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/功能/05-部署与运维.md#通过-ssh-访问-git-仓库)，用个人密钥检出和推送分支。Issue 与 PR/MR 自动化需要托管平台的 API Token 或另行配置的 MCP。[CNB 官方仅支持 HTTPS + 访问令牌](https://docs.cnb.cool/zh/guide/git-access.html)。
 
 ### 免 API Key 体验
 
@@ -113,7 +113,7 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 
 <br>
 
-- **执行器。** 首页对话、需求澄清、Bot 回复、通知汇报、运行评测和静态预览均可选择 CLI 与模型。每个 SOP 角色可以独立选择 CLI，内置模板仍默认使用 CodeBuddy。定时提示词使用任务所选的 CLI。将使用中的流程配置为其他 CLI 后，平台可在未安装 CodeBuddy、未配置其 Key 的环境中运行。[部署与升级说明](docs/deployment.md#choosing-an-executor)
+- **执行器。** 首页对话、需求澄清、Bot 回复、通知汇报、运行评测和静态预览均可选择 CLI 与模型。每个 SOP 角色可以独立选择 CLI，内置模板仍默认使用 CodeBuddy。定时提示词使用任务所选的 CLI。将使用中的流程配置为其他 CLI 后，平台可在未安装 CodeBuddy、未配置其 Key 的环境中运行。[部署与升级说明](docs/功能/05-部署与运维.md#选择执行器)
 
   | 执行器 | 凭据 | 安装方式 |
   | --- | --- | --- |
@@ -125,13 +125,13 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
   | **Cursor CLI · Antigravity** | 仅个人 Key | 首次在对话中使用时通过厂商安装脚本安装；不会装进 SOP 沙箱 |
   | **ZCode** | 仅个人 Key | 未内置，需安装到服务或执行机器的 PATH 中 |
 
-  Claude Code 之后的 7 种 Agent CLI 每次运行都在私有 HOME 目录里生成模型和 MCP 配置，因此始终使用需求责任人在个人设置中填写的 Key 和 Base URL，即使在已连接的执行机器上也一样。团队推广时，每位成员需要各自配置凭据。首次安装需要能访问 npm 或对应厂商；[原生部署](docs/deployment.md#workers-and-runners)需安装所选执行器的 CLI。
-- **企业微信通知。** 从本 Dockerfile 构建的平台镜像内置 `wecom-cli`，发布镜像将在下个版本包含它；原生部署需要另行安装，详见[部署指南](docs/deployment.md#native-development)。
+  Claude Code 之后的 7 种 Agent CLI 每次运行都在私有 HOME 目录里生成模型和 MCP 配置，因此始终使用需求责任人在个人设置中填写的 Key 和 Base URL，即使在已连接的执行机器上也一样。团队推广时，每位成员需要各自配置凭据。首次安装需要能访问 npm 或对应厂商；[原生部署](docs/功能/05-部署与运维.md#worker-与执行机器)需安装所选执行器的 CLI。
+- **企业微信通知。** 从本 Dockerfile 构建的平台镜像内置 `wecom-cli`，发布镜像将在下个版本包含它；原生部署需要另行安装，详见[部署指南](docs/功能/05-部署与运维.md#原生开发)。
 - **GitHub 可选。** 所有内置通用 SOP 都可以不绑定仓库运行：产品方案交付文档，前后端新项目在任务工作区交付源码；缺陷修复仍需提供待修代码和复现材料。需要修改已有代码或提交 PR 时再绑定仓库。
 - **交付到仓库。** 在个人设置中点击「连接 GitHub」，用设备码授权后选择自己的仓库（已内置 LoopForge 授权应用，无需申请 PAT，仍可手动填写 PAT），再配置执行器凭据（或绑定本机执行机器），之后既可以运行一条项目 SOP，也可以直接让 Main Bot 修改代码并提交 PR/MR。
-- **沙箱。** 默认 Compose 安装中，SOP 运行和对话工作区都使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，安装后无需再构建；自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/deployment.md#accounts)。重复执行安装脚本会保留已有数据。
-- **账号与访问。** 新安装默认监听所有网卡（已有安装保留原配置），面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/deployment.md#accounts)。
-- **远程访问、HTTPS、独立 Worker。** 见[部署指南](docs/deployment.md)。
+- **沙箱。** 默认 Compose 安装中，SOP 运行和对话工作区都使用 Docker 沙箱容器，由平台通过宿主机 Docker socket 启动；默认沙箱复用已安装的运行镜像，安装后无需再构建；自定义 Dockerfile 仍单独构建。Docker socket 赋予平台控制宿主机 Docker 的权限，因此只适用于可信团队，不构成不可信多租户隔离边界；详见[部署边界](docs/功能/05-部署与运维.md#账号)。重复执行安装脚本会保留已有数据。
+- **账号与访问。** 新安装默认监听所有网卡（已有安装保留原配置），面向可信团队：已登录用户可以读取实例内各项目的数据，团队成员可在登录页自助注册（在 `.env` 中设置 `AGENTFLOW_ALLOW_SIGNUP=false` 可关闭）。对团队以外开放前，请先阅读[账号与访问边界](docs/功能/05-部署与运维.md#账号)。
+- **远程访问、HTTPS、独立 Worker。** 见[部署指南](docs/功能/05-部署与运维.md)。
 - **参与 LoopForge 本身的开发？** 用 `bash scripts/dev.sh` 原生运行（需要 Go 1.26.11+）。
 
 </details>
@@ -169,7 +169,7 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 
 <p align="center"><sub>停在人工关口的运行：确认通过继续下游、补充信息重跑当前节点，或退回上游重做。</sub></p>
 
-**我们实际跑过的一次交付：** 四个 CodeBuddy 角色依次完成 Python 修复的规划、实现、独立评审和交付汇总；三个真实测试通过，运行等待人工批准，批准后再次验证代码与验收时一致。这条链路已沉淀为[可复用验收用例](e2e/api/45-delivery-model.test.mjs)，覆盖范围和未联调项见[实测记录](docs/validation.md)。
+**我们实际跑过的一次交付：** 四个 CodeBuddy 角色依次完成 Python 修复的规划、实现、独立评审和交付汇总；三个真实测试通过，运行等待人工批准，批准后再次验证代码与验收时一致。这条链路已沉淀为[可复用验收用例](e2e/api/45-delivery-model.test.mjs)，覆盖范围和未联调项见[实测记录](docs/功能/11-验收记录.md)。
 
 ## 功能一览
 
@@ -223,25 +223,27 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 LoopForge 不替代它们，而是编排它们。每个 Agent 步骤和每轮对话都运行这些 CLI 之一；LoopForge 补上外面的部分：谁来做、在哪个沙箱里、按什么顺序、经过哪些检查、由谁签字。
 
 **可以直接暴露到公网吗？**
-新安装默认监听所有网卡，面向可信团队。开放前请阅读[账号与访问边界](docs/deployment.md#accounts)并配置 HTTPS。安全漏洞请按[安全政策](SECURITY.zh-CN.md)私密报告。
+新安装默认监听所有网卡，面向可信团队。开放前请阅读[账号与访问边界](docs/功能/05-部署与运维.md#账号)并配置 HTTPS。安全漏洞请按[安全政策](SECURITY.zh-CN.md)私密报告。
 
 ## 文档
 
 | 我想了解 | 从这里开始 |
 | --- | --- |
-| 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.md) |
-| 对话工作区、AI 定时任务与 Token 成本口径 | [对话工作区](docs/conversation-workspaces.md) · [AI 定时任务](docs/ai-scheduled-task-capabilities.md) · [Token 成本统计](docs/token-pricing.md) |
+| 部署、账号、执行机器与凭据 | [部署指南](docs/功能/05-部署与运维.md) |
+| 对话工作区、AI 定时任务与 Token 成本口径 | [对话工作区](docs/功能/06-对话工作区与原生CLI.md) · [AI 定时任务](docs/功能/07-AI定时任务.md) · [Token 成本统计](docs/功能/09-Token成本口径.md) |
 | 继续使用 Local 旧版工作流 | [LoopForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
-| 扩展平台或接入 HTTP / MCP API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) · [共享定时任务 API](docs/api/shared-schedules.md) |
+| 扩展平台或接入 HTTP / MCP API | [架构](docs/功能/01-项目架构.md) · [API 参考](docs/api/README.md) · [共享定时任务 API](docs/api/shared-schedules.md) |
 | 参与前端开发 | [前端设计约定](design.md) |
-| 功能覆盖与发布就绪情况 | [实测记录](docs/validation.md) · [验收矩阵](docs/testing/acceptance-matrix.md) · [发布评审](docs/release-readiness.md) |
-| 来源与长期维护方式 | [开源范围](docs/open-source-scope.md) · [上游同步策略](docs/upstream-sync.md) |
+| 功能覆盖与发布就绪情况 | [实测记录](docs/功能/11-验收记录.md) · [验收矩阵](docs/功能/11-验收记录.md) · [发布评审](docs/功能/11-验收记录.md) |
+| 来源与长期维护方式 | [开源范围](docs/功能/10-开源范围与上游同步.md) · [上游同步策略](docs/功能/10-开源范围与上游同步.md) |
+
+完整文档索引见 [docs/README.md](docs/README.md)。
 
 ## 交流群
 
 扫描二维码加入 LoopForge 交流群。
 
-<img src="docs/community-wecom-qr.png" alt="LoopForge 交流群二维码" width="200" />
+<img src="docs/assets/community-wecom-qr.png" alt="LoopForge 交流群二维码" width="200" />
 
 ## 参与贡献
 

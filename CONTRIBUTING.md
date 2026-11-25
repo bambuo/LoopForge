@@ -14,7 +14,7 @@ python3 scripts/check-public.py
 bash scripts/scan-secrets.sh
 ```
 
-Community contributions do not require private source manifests or hash updates. Maintainers keep source synchronization records locally, separate from the public CI checks. See [the maintenance policy](docs/upstream-sync.md).
+Community contributions do not require private source manifests or hash updates. Maintainers keep source synchronization records locally, separate from the public CI checks. See [the maintenance policy](docs/功能/10-开源范围与上游同步.md).
 
 Run the [public browser acceptance suite](e2e/public/README.md) for authentication, preferences or execution changes. Paid model and external knowledge tests require explicit operator configuration; state passed, failed, skipped and not-run checks accurately.
 

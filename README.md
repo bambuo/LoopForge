@@ -43,7 +43,7 @@ Coding-agent CLIs do the work: CodeBuddy, Codex, Claude Code, OpenCode, Cursor C
 | | **Chat with Main Bot** | **Run an SOP** |
 | --- | --- | --- |
 | Best for | Exploring, quick fixes, iterating with the agent | Repeatable delivery with fixed stages and sign-off |
-| How it runs | Main Bot opens a [conversation workspace](docs/conversation-workspaces.md) (a Docker sandbox with your repos) on demand and calls project roles as subagents | The engine runs Agent, Script, Human-gate and sub-SOP nodes in order, in their own sandbox |
+| How it runs | Main Bot opens a [conversation workspace](docs/功能/06-对话工作区与原生CLI.md) (a Docker sandbox with your repos) on demand and calls project roles as subagents | The engine runs Agent, Script, Human-gate and sub-SOP nodes in order, in their own sandbox |
 | You stay in control by | Queuing or steering messages mid-reply, and pausing, resuming or taking over a running SOP from chat | Approving at human gates, sending work back to a chosen step, retrying or rerunning from any node |
 | Delivers | A PR/MR, or a direct merge into a shared branch (`mode=direct`) | Documents, code or a PR, plus per-node artifacts and logs |
 
@@ -90,7 +90,7 @@ MIRROR=ghcr.nju.edu.cn ./start.sh pull
 
 Open the address printed by the installer and create your account; the first one becomes the administrator. The service listens on `0.0.0.0:8090` by default. On a cloud host, the installer reads the public IP from the provider's metadata service and prints it; allow the port in your security group, or put an HTTPS reverse proxy in front. Restrict access to your own IP until the administrator account exists. The home page's quick-access guide walks you through adding a model key, connecting a repository and choosing an SOP.
 
-For GitLab, Gitea, Gogs and other Git hosts, [set up Git SSH](docs/deployment.md#git-repositories-over-ssh) to check out and push branches with a personal key. PR/MR and Issue automation requires a hosting API token or a separately configured MCP.
+For GitLab, Gitea, Gogs and other Git hosts, [set up Git SSH](docs/功能/05-部署与运维.md#通过-ssh-访问-git-仓库) to check out and push branches with a personal key. PR/MR and Issue automation requires a hosting API token or a separately configured MCP.
 
 ### Try it without an API key
 
@@ -113,7 +113,7 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 
 <br>
 
-- **Executors.** Choose a CLI and model for chat, requirement clarification, Bot replies, notification reports, run evaluation, or static preview. Each SOP role can select its own CLI, and built-in templates still default to CodeBuddy. Scheduled prompts use the CLI selected on the schedule. The platform can run without a CodeBuddy installation or key once its workflows use other CLIs. [Deployment and upgrade](docs/deployment.md#choosing-an-executor)
+- **Executors.** Choose a CLI and model for chat, requirement clarification, Bot replies, notification reports, run evaluation, or static preview. Each SOP role can select its own CLI, and built-in templates still default to CodeBuddy. Scheduled prompts use the CLI selected on the schedule. The platform can run without a CodeBuddy installation or key once its workflows use other CLIs. [Deployment and upgrade](docs/功能/05-部署与运维.md#选择执行器)
 
   | Executor | Credentials | Installation |
   | --- | --- | --- |
@@ -126,13 +126,13 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
   | **Antigravity** | Personal key, or the connected execution machine owner's existing account login | Install the official CLI on the execution machine and in Docker images used for SOP runs |
   | **ZCode** | Personal key only | Not bundled; install it on the service or execution machine PATH |
 
-  The seven agent CLIs after Claude Code keep their model and MCP configuration in a private home directory per run. Antigravity can reuse the execution machine owner's account login in conversation workspaces and native or Docker SOP sandboxes. Its official CLI refreshes the credential copy, and the Runner saves the refreshed login back to its original local store. Gemini API keys use separate API billing. The other agent CLIs use the responsible user's own key and Base URL from personal settings, including on a connected execution machine. First-use installs need npm or provider access; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
-- **WeCom notifications.** The image built from this Dockerfile includes `wecom-cli`; published images gain it with the next release. Native installations need to install it separately; see [Deployment](docs/deployment.md#native-development).
+  The seven agent CLIs after Claude Code keep their model and MCP configuration in a private home directory per run. Antigravity can reuse the execution machine owner's account login in conversation workspaces and native or Docker SOP sandboxes. Its official CLI refreshes the credential copy, and the Runner saves the refreshed login back to its original local store. Gemini API keys use separate API billing. The other agent CLIs use the responsible user's own key and Base URL from personal settings, including on a connected execution machine. First-use installs need npm or provider access; [native deployments](docs/功能/05-部署与运维.md#worker-与执行机器) need the CLI for the executor you choose.
+- **WeCom notifications.** The image built from this Dockerfile includes `wecom-cli`; published images gain it with the next release. Native installations need to install it separately; see [Deployment](docs/功能/05-部署与运维.md#原生开发).
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, and new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
 - **Delivering to a repository.** Choose **Connect GitHub** in personal settings, approve the device code on GitHub and pick your repository (the LoopForge OAuth App is built in; no PAT required, manual PAT entry still works). Set executor credentials (or bind a local execution machine), then either run a project SOP or ask Main Bot to change the code and submit a PR/MR.
-- **Sandboxes.** In the default Compose installation, SOP runs and conversation workspaces both use Docker sandbox containers started through the host Docker socket. Default sandboxes reuse the installed runtime image, so nothing extra is built after installation; custom Dockerfiles still build their own images. Docker socket access grants control of the host daemon, so this setup is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
-- **Accounts and access.** New installations listen on all interfaces (existing bind settings are kept) and are designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/deployment.md#accounts) before exposing it beyond your team.
-- **Remote access, HTTPS, separate workers.** See [Deployment](docs/deployment.md).
+- **Sandboxes.** In the default Compose installation, SOP runs and conversation workspaces both use Docker sandbox containers started through the host Docker socket. Default sandboxes reuse the installed runtime image, so nothing extra is built after installation; custom Dockerfiles still build their own images. Docker socket access grants control of the host daemon, so this setup is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/功能/05-部署与运维.md#账号). Re-running the installer keeps your data.
+- **Accounts and access.** New installations listen on all interfaces (existing bind settings are kept) and are designed for a trusted team: signed-in users can read project data across the instance, and teammates can sign up from the login page (`AGENTFLOW_ALLOW_SIGNUP=false` in `.env` turns that off). Read the [account and access model](docs/功能/05-部署与运维.md#账号) before exposing it beyond your team.
+- **Remote access, HTTPS, separate workers.** See [Deployment](docs/功能/05-部署与运维.md).
 - **Hacking on LoopForge itself?** `bash scripts/dev.sh` runs it natively (Go 1.26.11+).
 
 </details>
@@ -170,7 +170,7 @@ Each node declares its artifacts and dependencies, and the engine starts each st
 
 <p align="center"><sub>A run waiting at a human gate: approve and continue, add context and rerun the step, or send the work back upstream.</sub></p>
 
-**A delivery we actually ran:** four CodeBuddy roles planned a Python fix, implemented it, reviewed it independently and summarized the delivery. Three real tests passed; the run waited for human approval, then verified the accepted code had not changed. The [reusable acceptance case](e2e/api/45-delivery-model.test.mjs) checks the files and results. See the [validation record](docs/validation.md) for scope and known gaps.
+**A delivery we actually ran:** four CodeBuddy roles planned a Python fix, implemented it, reviewed it independently and summarized the delivery. Three real tests passed; the run waited for human approval, then verified the accepted code had not changed. The [reusable acceptance case](e2e/api/45-delivery-model.test.mjs) checks the files and results. See the [validation record](docs/功能/11-验收记录.md) for scope and known gaps.
 
 ## Features
 
@@ -224,25 +224,27 @@ Those are general-purpose AI and automation workflow builders. LoopForge is buil
 LoopForge doesn't replace them; it orchestrates them. Each agent step and each chat turn runs one of those CLIs. LoopForge adds what surrounds it: who does what, in which sandbox, in which order, with which checks, and who signs off.
 
 **Is it safe to expose on the internet?**
-New installations listen on all interfaces and target a trusted team. Read the [account and access model](docs/deployment.md#accounts) and set up HTTPS before opening it up. Report vulnerabilities privately via the [security policy](SECURITY.md).
+New installations listen on all interfaces and target a trusted team. Read the [account and access model](docs/功能/05-部署与运维.md#账号) and set up HTTPS before opening it up. Report vulnerabilities privately via the [security policy](SECURITY.md).
 
 ## Documentation
 
 | I want to… | Start here |
 | --- | --- |
-| Deploy, manage accounts, connect execution machines | [Deployment](docs/deployment.md) |
-| Understand chat workspaces, scheduled AI tasks and token pricing | [Conversation workspaces](docs/conversation-workspaces.md) · [AI scheduled tasks](docs/ai-scheduled-task-capabilities.md) · [Token pricing](docs/token-pricing.md) |
+| Deploy, manage accounts, connect execution machines | [Deployment](docs/功能/05-部署与运维.md) |
+| Understand chat workspaces, scheduled AI tasks and token pricing | [Conversation workspaces](docs/功能/06-对话工作区与原生CLI.md) · [AI scheduled tasks](docs/功能/07-AI定时任务.md) · [Token pricing](docs/功能/09-Token成本口径.md) |
 | Maintain an existing Local installation | [LoopForge Local](docs/local/usage.md) · [Editions](docs/local/editions.md) |
-| Extend the platform or use the HTTP / MCP API | [Architecture](docs/architecture.md) · [API reference](docs/api/README.md) · [Shared schedules API](docs/api/shared-schedules.md) |
+| Extend the platform or use the HTTP / MCP API | [Architecture](docs/功能/01-项目架构.md) · [API reference](docs/api/README.md) · [Shared schedules API](docs/api/shared-schedules.md) |
 | Contribute to the UI | [Frontend design conventions](design.md) (Chinese) |
-| Check functional coverage and release readiness | [Validation record](docs/validation.md) · [Acceptance matrix](docs/testing/acceptance-matrix.md) · [Release review](docs/release-readiness.md) |
-| Understand source provenance and maintenance | [Public scope](docs/open-source-scope.md) · [Upstream synchronization](docs/upstream-sync.md) |
+| Check functional coverage and release readiness | [Validation record](docs/功能/11-验收记录.md) · [Acceptance matrix](docs/功能/11-验收记录.md) · [Release review](docs/功能/11-验收记录.md) |
+| Understand source provenance and maintenance | [Public scope](docs/功能/10-开源范围与上游同步.md) · [Upstream synchronization](docs/功能/10-开源范围与上游同步.md) |
+
+Full index: [docs/README.md](docs/README.md).
 
 ## Community
 
 Scan the QR code to join the LoopForge community group.
 
-<img src="docs/community-wecom-qr.png" alt="LoopForge community group QR code" width="200" />
+<img src="docs/assets/community-wecom-qr.png" alt="LoopForge community group QR code" width="200" />
 
 ## Contributing
 

@@ -7,6 +7,55 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 本文件面向所有在仓库内工作的 AI agent 与人类贡献者，约定 repo 层与 handler 层的结构规则。
 新增代码必须遵守；发现历史偏差时先归位再继续。
 
+## 阅读顺序
+
+1. `docs/README.md`：文档索引与目录约定
+2. `docs/架构全景图.md`：系统边界、部署拓扑与运行时链路
+3. `docs/功能/01-项目架构.md`、`02-功能清单.md`：组件职责、接口与任务口径
+4. `docs/功能/03-领域术语表.md`、`04-接口附录.md`：主术语与全量接口
+5. 目标改动对应的 `docs/流程/*-vN.md` 与代码测试
+
+## 仓库地图
+
+| 位置 | 职责 |
+| --- | --- |
+| `cmd/agentflow` | 平台进程（`-role api/worker/all`） |
+| `cmd/agentflow-runner` | 执行机器守护进程 |
+| `cmd/agentflow-mcp`、`cmd/agentflow-gate-mcp` | 公共 MCP 与门禁 MCP |
+| `internal/httpapi` | HTTP/MCP handler，每领域一个 struct |
+| `internal/engine` | SOP 图、调度、租约、沙箱生命周期与交付 |
+| `internal/repo` | MySQL 持久化，每领域一个 Repo |
+| `internal/runtime`、`internal/runner` | 执行器协议、沙箱与执行机器 |
+| `web`、`chatbot` | 内嵌 Web 与对话前端源码 |
+| `local` | 旧版本地工作流运行时（Legacy） |
+| `migrations` | 手动执行的数据迁移与可选目录 SQL |
+| `docs` | 文档体系（见 `docs/README.md`） |
+
+## 常用命令
+
+```bash
+make run                 # 本地启动平台
+make test                # Go 测试（并行 16，超时 4m）
+make build               # 构建二进制与前端
+make build-chatbot       # 只构建对话前端
+bash scripts/dev.sh      # 原生开发：配置、MySQL、构建、8090
+./start.sh               # 发布镜像安装/启动
+./start.sh dev           # 源码构建安装/启动
+```
+
+## 测试与完成标准
+
+- 后端改动至少运行受影响包的 `go test`；修改前端需实际构建并在浏览器验证。
+- 修复 bug 补回归测试；不得为变绿删除断言或跳过用例。
+- 交付时列出实际执行的命令与结果；未执行项明确说明。
+- 文档改动运行 `docs/README.md` 中的门禁命令，并对 Mermaid 做实际渲染校验。
+
+## 文档体系
+
+- `docs/` 固定五个位置：`README.md`、`架构全景图.md`、`需求/`、`流程/`、`功能/`。
+- 例外资产：`docs/api`（Go 包与 OpenAPI 嵌入）、`docs/assets`、`docs/local`（Local 子项目手册）。
+- 流程文档仅在流程变化时新增版本；历史版本只读。新增文档必须更新 `docs/README.md` 索引。
+
 ## repo 层（internal/repo）
 
 每个领域一个 Repo，文件与方法一一归属：
